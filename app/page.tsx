@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, Fragment, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -1152,6 +1152,7 @@ function ReportsWorkspace({
   const [employeeQuery, setEmployeeQuery] = useState('');
   const [exportOpen, setExportOpen] = useState(false);
   const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null);
+  const exportMenuRef = useRef<HTMLDivElement>(null);
   const pageSize = 10;
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const safePage = Math.min(currentPage, pageCount);
@@ -1179,6 +1180,19 @@ function ReportsWorkspace({
   useEffect(() => {
     setEmployeeQuery(selectedEmployee ? employeePickerLabel(selectedEmployee) : '');
   }, [selectedEmployee]);
+
+  useEffect(() => {
+    if (!exportOpen) return;
+
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) {
+        setExportOpen(false);
+      }
+    };
+
+    document.addEventListener('pointerdown', closeOnOutsidePointerDown);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointerDown);
+  }, [exportOpen]);
 
   const applyRange = (preset: ReportDatePreset, range: { start: string; end: string }) => {
     onDatePreset(preset);
@@ -1234,19 +1248,17 @@ function ReportsWorkspace({
     </section>
 
     <section className="register-panel report-panel">
-      <div className="report-controls">
+      <div className="report-filter-layout">
         <label className="filter-field report-date-field">Date range<select value={datePreset} onChange={(event) => changeDatePreset(event.target.value as ReportDatePreset)}><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This week</option><option value="last_week">Last week</option><option value="this_month">This month</option><option value="last_month">Last month</option><option value="last_30_days">Last 30 days</option><option value="custom">Custom range</option></select></label>
         <label className="filter-field report-date-field">From<input type="date" value={startDate} max={endDate} onChange={(event) => { onDatePreset('custom'); onStartDate(event.target.value); }} /></label>
         <label className="filter-field report-date-field">To<input type="date" value={endDate} min={startDate} onChange={(event) => { onDatePreset('custom'); onEndDate(event.target.value); }} /></label>
-        <div className="report-export-menu">
+        <div className="report-export-menu" ref={exportMenuRef}>
           <button className="report-export" type="button" disabled={!rows.length || exporting !== null} onClick={() => setExportOpen((open) => !open)} aria-expanded={exportOpen}><ShareIcon size={18} /> {exporting ? 'Preparing...' : 'Export'}</button>
           {exportOpen && <div className="report-export-options"><button type="button" disabled={exporting !== null} onClick={() => void exportFile('csv')}>Export CSV</button><button type="button" disabled={exporting !== null} onClick={() => void exportFile('pdf')}>Export PDF</button></div>}
         </div>
-      </div>
-      <div className="register-filters">
-        <label className="filter-field">Status<select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as ReportStatusFilter)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="on_duty">On duty</option><option value="exception">Exceptions</option><option value="absent">No clock in</option><option value="leave">On leave</option></select></label>
-        <label className="filter-field">Department<select value={departmentFilter} onChange={(event) => onDepartmentFilter(event.target.value)}><option value="all">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
-        <label className="filter-field employee-filter">Employee<input list="report-employee-options" value={employeeQuery} onChange={(event) => handleEmployeeInput(event.target.value)} onBlur={() => { if (employeeQuery && !employees.some((employee) => employeePickerLabel(employee) === employeeQuery)) setEmployeeQuery(selectedEmployee ? employeePickerLabel(selectedEmployee) : ''); }} placeholder="All employees" /><datalist id="report-employee-options"><option value="All employees" />{employees.map((employee) => <option key={employee.id} value={employeePickerLabel(employee)} />)}</datalist></label>
+        <label className="filter-field report-select-field report-status-field">Status<select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as ReportStatusFilter)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="on_duty">On duty</option><option value="exception">Exceptions</option><option value="absent">No clock in</option><option value="leave">On leave</option></select></label>
+        <label className="filter-field report-select-field report-department-field">Department<select value={departmentFilter} onChange={(event) => onDepartmentFilter(event.target.value)}><option value="all">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
+        <label className="filter-field report-select-field employee-filter">Employee<span className="employee-input-wrap"><input list="report-employee-options" value={employeeQuery} onChange={(event) => handleEmployeeInput(event.target.value)} onBlur={() => { if (employeeQuery && !employees.some((employee) => employeePickerLabel(employee) === employeeQuery)) setEmployeeQuery(selectedEmployee ? employeePickerLabel(selectedEmployee) : ''); }} placeholder="All employees" />{employeeQuery && <button className="employee-filter-clear" type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => { setEmployeeQuery(''); onEmployeeFilter('all'); }} aria-label="Clear employee filter" title="Clear employee filter">×</button>}</span><datalist id="report-employee-options"><option value="All employees" />{employees.map((employee) => <option key={employee.id} value={employeePickerLabel(employee)} />)}</datalist></label>
       </div>
       <section className="report-metric-grid">
         <ReportMetric label="Records" value={reportMetrics.records} tone="ink" />
