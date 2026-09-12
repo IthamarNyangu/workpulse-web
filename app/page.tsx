@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, Fragment, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
@@ -10,6 +10,7 @@ import {
   GridIcon,
   MarkIcon,
   SearchIcon,
+  ShareIcon,
   SettingsIcon,
 } from '../components/icons';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
@@ -21,6 +22,10 @@ type StatusFilter = 'all' | 'attention' | 'on_duty' | 'completed' | 'leave' | 'l
 type AttendanceScope = 'mine' | 'team';
 type ApprovalScope = 'pending' | 'reviewed' | 'all';
 type ApprovalTypeFilter = 'all' | 'leave' | 'correction';
+type ReportScope = 'mine' | 'team';
+type ReportStatusFilter = 'all' | 'completed' | 'on_duty' | 'exception' | 'absent' | 'leave';
+type ReportDatePreset = 'custom' | 'today' | 'yesterday' | 'this_week' | 'last_week' | 'this_month' | 'last_month' | 'last_30_days';
+type ReportRow = { profile: Profile; attendance: AttendanceRecord; officeName?: string };
 
 const roleLabel: Record<WorkPulseRole, string> = {
   employee: 'Employee',
@@ -42,6 +47,54 @@ const statusLabel: Record<string, string> = {
 function dateKey(value = new Date()) {
   const offset = value.getTimezoneOffset() * 60_000;
   return new Date(value.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function startOfMonthKey(value = new Date()) {
+  return dateKey(new Date(value.getFullYear(), value.getMonth(), 1));
+}
+
+function endOfMonthKey(value = new Date()) {
+  return dateKey(new Date(value.getFullYear(), value.getMonth() + 1, 0));
+}
+
+function previousMonthRange(value = new Date()) {
+  const firstDayThisMonth = new Date(value.getFullYear(), value.getMonth(), 1);
+  return {
+    start: dateKey(new Date(value.getFullYear(), value.getMonth() - 1, 1)),
+    end: dateKey(new Date(firstDayThisMonth.getTime() - 86_400_000)),
+  };
+}
+
+function lastThirtyDaysRange(value = new Date()) {
+  return {
+    start: dateKey(new Date(value.getFullYear(), value.getMonth(), value.getDate() - 29)),
+    end: dateKey(value),
+  };
+}
+
+function yesterdayRange(value = new Date()) {
+  const yesterday = new Date(value.getFullYear(), value.getMonth(), value.getDate() - 1);
+  const date = dateKey(yesterday);
+  return { start: date, end: date };
+}
+
+function currentWeekRange(value = new Date()) {
+  const day = value.getDay();
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  return {
+    start: dateKey(new Date(value.getFullYear(), value.getMonth(), value.getDate() + mondayOffset)),
+    end: dateKey(value),
+  };
+}
+
+function previousWeekRange(value = new Date()) {
+  const day = value.getDay();
+  const mondayOffset = day === 0 ? -13 : -6 - day;
+  const start = new Date(value.getFullYear(), value.getMonth(), value.getDate() + mondayOffset);
+  return {
+    start: dateKey(start),
+    end: dateKey(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6)),
+  };
 }
 
 function formatTime(value: string | null | undefined) {
@@ -76,12 +129,17 @@ function effectiveStatus(row: TeamRow) {
 }
 
 function workHours(record?: AttendanceRecord) {
-  if (!record?.clock_in || !record.clock_out || record.status !== 'completed') return '--';
+  const minutes = workMinutes(record);
+  if (minutes === null) return '--';
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
+function workMinutes(record?: AttendanceRecord) {
+  if (!record?.clock_in || !record.clock_out || record.status !== 'completed') return null;
   const startedAt = new Date(record.clock_in).getTime();
   const endedAt = new Date(record.clock_out).getTime();
-  if (!endedAt || Number.isNaN(startedAt) || Number.isNaN(endedAt)) return '--';
-  const minutes = Math.max(0, Math.floor((endedAt - startedAt) / 60_000));
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+  if (!endedAt || Number.isNaN(startedAt) || Number.isNaN(endedAt)) return null;
+  return Math.max(0, Math.floor((endedAt - startedAt) / 60_000));
 }
 
 function locationStatusLabel(status?: string | null) {
@@ -132,6 +190,137 @@ function requestStatusTone(status: string) {
   return status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'amber';
 }
 
+function exportReportCsv(rows: ReportRow[], startDate: string, endDate: string) {
+  const escapeCell = (value: string | number | null | undefined) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+  const heading = [
+    'Work date', 'Employee ID', 'Employee', 'Department', 'Status',
+    'Clock in', 'Clock out', 'Work hours', 'Office', 'Location status',
+  ];
+  const data = rows.map((row) => [
+    row.attendance.work_date,
+    row.profile.employee_id,
+    row.profile.full_name,
+    row.profile.department || '',
+    statusLabel[row.attendance.status] || row.attendance.status,
+    formatTime(row.attendance.clock_in),
+    formatTime(row.attendance.clock_out),
+    workHours(row.attendance),
+    row.officeName || '',
+    locationStatusLabel(row.attendance.clock_in_location_status),
+  ]);
+  const csv = [[reportTitle(startDate, endDate)], [], heading, ...data].map((line) => line.map(escapeCell).join(',')).join('\r\n');
+  const blob = new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `workpulse_attendance_${startDate}_to_${endDate}.csv`;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
+async function exportReportPdf(rows: ReportRow[], startDate: string, endDate: string) {
+  const [{ jsPDF }, autoTableModule] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const autoTable = autoTableModule.default;
+  const document = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  document.setFontSize(16);
+  document.setTextColor(16, 33, 61);
+  document.text(reportTitle(startDate, endDate), 40, 42);
+  document.setFontSize(9);
+  document.setTextColor(78, 93, 117);
+  document.text(`${rows.length} attendance record${rows.length === 1 ? '' : 's'}`, 40, 59);
+  autoTable(document, {
+    startY: 78,
+    head: [['Date', 'Employee', 'Department', 'Status', 'Clock in', 'Clock out', 'Completed hours', 'Office']],
+    body: rows.map((row) => [
+      displayDate(row.attendance.work_date),
+      `${row.profile.full_name}\n${row.profile.employee_id}`,
+      row.profile.department || 'Unassigned',
+      statusLabel[row.attendance.status] || row.attendance.status,
+      formatTime(row.attendance.clock_in),
+      formatTime(row.attendance.clock_out),
+      workHours(row.attendance),
+      row.officeName || 'No office',
+    ]),
+    styles: { fontSize: 8, cellPadding: 6, textColor: [48, 64, 88] },
+    headStyles: { fillColor: [16, 94, 66], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [247, 250, 248] },
+    margin: { left: 40, right: 40 },
+  });
+  document.save(`workpulse_attendance_${startDate}_to_${endDate}.pdf`);
+}
+
+function reportTitle(startDate: string, endDate: string) {
+  return `WorkPulse Attendance Report: ${displayDate(startDate)} - ${displayDate(endDate)}`;
+}
+
+function employeePickerLabel(profile: Profile) {
+  return [profile.full_name, profile.employee_id, profile.job_title].filter(Boolean).join(' | ');
+}
+
+function reportFileStem(profile: Profile, startDate: string, endDate: string) {
+  const name = profile.full_name.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '');
+  return `workpulse_attendance_${name}_${startDate}_to_${endDate}`;
+}
+
+function employeeReportRows(rows: ReportRow[]) {
+  return rows.map((row) => [
+    displayDate(row.attendance.work_date),
+    statusLabel[row.attendance.status] || row.attendance.status,
+    formatTime(row.attendance.clock_in),
+    formatTime(row.attendance.clock_out),
+    workHours(row.attendance),
+    row.officeName || 'No office',
+  ]);
+}
+
+async function exportEmployeeReportXlsx(profile: Profile, rows: ReportRow[], startDate: string, endDate: string) {
+  const XLSX = await import('xlsx');
+  const heading = reportTitle(startDate, endDate);
+  const worksheet = XLSX.utils.aoa_to_sheet([
+    [heading],
+    [`Employee: ${profile.full_name} (${profile.employee_id})`],
+    [`Department: ${profile.department || 'Unassigned'}`],
+    [],
+    ['Date', 'Status', 'Clock In', 'Clock Out', 'Completed Hours', 'Office'],
+    ...employeeReportRows(rows),
+  ]);
+  worksheet['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: 5 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: 5 } },
+    { s: { r: 2, c: 0 }, e: { r: 2, c: 5 } },
+  ];
+  worksheet['!cols'] = [
+    { wch: 31 }, { wch: 22 }, { wch: 13 }, { wch: 13 }, { wch: 19 }, { wch: 29 },
+  ];
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Attendance');
+  XLSX.writeFile(workbook, `${reportFileStem(profile, startDate, endDate)}.xlsx`);
+}
+
+async function exportEmployeeReportPdf(profile: Profile, rows: ReportRow[], startDate: string, endDate: string) {
+  const [{ jsPDF }, autoTableModule] = await Promise.all([import('jspdf'), import('jspdf-autotable')]);
+  const autoTable = autoTableModule.default;
+  const document = new jsPDF({ orientation: 'landscape', unit: 'pt', format: 'a4' });
+  document.setFontSize(16);
+  document.text(reportTitle(startDate, endDate), 40, 44);
+  document.setFontSize(10);
+  document.setTextColor(78, 93, 117);
+  document.text(`Employee: ${profile.full_name} (${profile.employee_id})`, 40, 65);
+  document.text(`Department: ${profile.department || 'Unassigned'}`, 40, 81);
+  autoTable(document, {
+    startY: 101,
+    head: [['Date', 'Status', 'Clock In', 'Clock Out', 'Completed Hours', 'Office']],
+    body: employeeReportRows(rows),
+    styles: { fontSize: 8, cellPadding: 6, textColor: [36, 51, 77] },
+    headStyles: { fillColor: [19, 137, 74], textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: [245, 248, 246] },
+    margin: { left: 40, right: 40 },
+  });
+  document.save(`${reportFileStem(profile, startDate, endDate)}.pdf`);
+}
+
 export default function PortalPage() {
   const [session, setSession] = useState<Session | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
@@ -160,6 +349,16 @@ export default function PortalPage() {
   const [approvalDepartmentFilter, setApprovalDepartmentFilter] = useState('all');
   const [approvalSearch, setApprovalSearch] = useState('');
   const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
+  const [reportRows, setReportRows] = useState<ReportRow[]>([]);
+  const [reportLoading, setReportLoading] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [reportScope, setReportScope] = useState<ReportScope>('team');
+  const [reportStartDate, setReportStartDate] = useState(startOfMonthKey());
+  const [reportEndDate, setReportEndDate] = useState(dateKey());
+  const [reportDatePreset, setReportDatePreset] = useState<ReportDatePreset>('this_month');
+  const [reportStatusFilter, setReportStatusFilter] = useState<ReportStatusFilter>('all');
+  const [reportDepartmentFilter, setReportDepartmentFilter] = useState('all');
+  const [reportEmployeeFilter, setReportEmployeeFilter] = useState('all');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   useEffect(() => {
@@ -174,6 +373,8 @@ export default function PortalPage() {
         setTeam([]);
         setApprovalItems([]);
         setSelectedApproval(null);
+        setReportRows([]);
+        setReportError(null);
       }
     });
     return () => subscription.subscription.unsubscribe();
@@ -202,6 +403,13 @@ export default function PortalPage() {
   // Access role changes are an intentional refresh trigger for the approval inbox.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, roles.join('|'), session?.user.id]);
+
+  useEffect(() => {
+    if (!session?.user || !supabase || activeView !== 'reports' || !profile) return;
+    void loadReportData();
+  // Report range, scope, and role changes intentionally refresh the report data.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, profile?.id, reportEndDate, reportScope, reportStartDate, roles.join('|'), session?.user.id]);
 
   async function loadPortalData() {
     if (!supabase || !session?.user) return;
@@ -315,6 +523,99 @@ export default function PortalPage() {
     } finally {
       setLoading(false);
       setPortalReady(true);
+    }
+  }
+
+  async function loadReportData() {
+    if (!supabase || !session?.user || !profile) return;
+    if (reportStartDate > reportEndDate) {
+      setReportRows([]);
+      setReportError('Start date must be on or before end date.');
+      return;
+    }
+
+    setReportLoading(true);
+    setReportError(null);
+    try {
+      const canReviewTeam = roles.some((role) => role === 'supervisor' || role === 'hr' || role === 'admin');
+      const hasOrganisationScope = roles.some((role) => role === 'hr' || role === 'admin');
+      const shouldLoadTeam = reportScope === 'team' && canReviewTeam;
+      let profiles: Profile[] = [];
+
+      if (!shouldLoadTeam) {
+        profiles = [profile];
+      } else if (hasOrganisationScope) {
+        const { data, error: profilesError } = await supabase
+          .from('profiles')
+          .select('id, employee_id, full_name, email, role, department, job_title, is_active')
+          .eq('is_active', true)
+          .order('full_name');
+        if (profilesError) throw profilesError;
+        profiles = (data || []) as Profile[];
+      } else {
+        const { data: assignments, error: assignmentsError } = await supabase
+          .from('employee_supervisor_assignments')
+          .select('employee_id')
+          .eq('supervisor_id', session.user.id)
+          .eq('is_active', true)
+          .eq('is_primary', true);
+        if (assignmentsError) throw assignmentsError;
+
+        const employeeIds = (assignments || []).map((item) => item.employee_id);
+        if (employeeIds.length) {
+          const { data, error: profilesError } = await supabase
+            .from('profiles')
+            .select('id, employee_id, full_name, email, role, department, job_title, is_active')
+            .in('id', employeeIds)
+            .eq('is_active', true)
+            .order('full_name');
+          if (profilesError) throw profilesError;
+          profiles = (data || []) as Profile[];
+        }
+      }
+
+      const visibleIds = profiles.map((person) => person.id);
+      const [attendanceResponse, officeResponse] = await Promise.all([
+        visibleIds.length
+          ? supabase
+              .from('attendance_records')
+              .select([
+                'id', 'user_id', 'work_date', 'clock_in', 'clock_out', 'status',
+                'clock_in_comment', 'clock_out_comment',
+                'clock_in_accuracy_m', 'clock_out_accuracy_m',
+                'clock_in_distance_m', 'clock_out_distance_m',
+                'clock_in_geofence_radius_m', 'clock_out_geofence_radius_m',
+                'clock_in_location_status', 'clock_out_location_status',
+                'clock_in_verified_office_location_id', 'clock_out_verified_office_location_id',
+                'clock_in_nearest_office_location_id', 'clock_out_nearest_office_location_id',
+              ].join(', '))
+              .gte('work_date', reportStartDate)
+              .lte('work_date', reportEndDate)
+              .in('user_id', visibleIds)
+              .order('work_date', { ascending: false })
+              .order('clock_in', { ascending: false })
+          : Promise.resolve({ data: [], error: null }),
+        supabase.from('office_locations').select('id, office_name').eq('is_active', true),
+      ]);
+      if (attendanceResponse.error) throw attendanceResponse.error;
+      if (officeResponse.error) throw officeResponse.error;
+
+      const profilesById = new Map(profiles.map((person) => [person.id, person]));
+      const officeNames = new Map((officeResponse.data || []).map((office: Office) => [office.id, office.office_name]));
+      const rows = (attendanceResponse.data || []).flatMap((record): ReportRow[] => {
+        const attendance = record as unknown as AttendanceRecord;
+        const employee = profilesById.get(attendance.user_id);
+        if (!employee) return [];
+        const officeName = officeNames.get(
+          attendance.clock_in_verified_office_location_id || attendance.clock_in_nearest_office_location_id || '',
+        );
+        return [{ profile: employee, attendance, officeName }];
+      });
+      setReportRows(rows);
+    } catch (caught) {
+      setReportError(caught instanceof Error ? caught.message : 'WorkPulse could not load the report data.');
+    } finally {
+      setReportLoading(false);
     }
   }
 
@@ -547,6 +848,33 @@ export default function PortalPage() {
     });
   }, [approvalDepartmentFilter, approvalItems, approvalScope, approvalSearch, approvalTypeFilter]);
 
+  const reportDepartments = useMemo(() => {
+    return [...new Set(reportRows.map((row) => row.profile.department).filter(Boolean) as string[])].sort();
+  }, [reportRows]);
+
+  const reportEmployees = useMemo(() => {
+    const byId = new Map<string, Profile>();
+    reportRows.forEach((row) => {
+      if (reportDepartmentFilter === 'all' || row.profile.department === reportDepartmentFilter) {
+        byId.set(row.profile.id, row.profile);
+      }
+    });
+    return [...byId.values()].sort((left, right) => left.full_name.localeCompare(right.full_name));
+  }, [reportDepartmentFilter, reportRows]);
+
+  const filteredReportRows = useMemo(() => {
+    return reportRows.filter((row) => {
+      const status = row.attendance.status;
+      const matchesStatus = reportStatusFilter === 'all'
+        || reportStatusFilter === status
+        || (reportStatusFilter === 'exception' && ['missed_punch', 'correction_pending'].includes(status))
+        || (reportStatusFilter === 'leave' && ['on_leave', 'leave_pending'].includes(status));
+      const matchesDepartment = reportDepartmentFilter === 'all' || row.profile.department === reportDepartmentFilter;
+      const matchesEmployee = reportEmployeeFilter === 'all' || row.profile.id === reportEmployeeFilter;
+      return matchesStatus && matchesDepartment && matchesEmployee;
+    });
+  }, [reportDepartmentFilter, reportEmployeeFilter, reportRows, reportStatusFilter]);
+
   if (!isSupabaseConfigured) return <ConfigurationNotice />;
   if (!sessionReady) return <main className="session-loading" aria-label="Restoring WorkPulse session"><div className="loader" /></main>;
   if (!session) {
@@ -579,14 +907,14 @@ export default function PortalPage() {
             aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
             title={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
           >
-            {sidebarCollapsed ? '»' : '«'}
+            {sidebarCollapsed ? '>' : '<'}
           </button>
         </div>
         <div className="workspace-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Portal navigation">
           <NavItem active={activeView === 'attendance'} icon={<GridIcon />} label="Attendance" onClick={() => setActiveView('attendance')} />
           {canReview && <NavItem active={activeView === 'approvals'} icon={<ClipboardIcon />} label="Approvals" onClick={() => setActiveView('approvals')} />}
-          <NavItem active={activeView === 'reports'} icon={<ChartIcon />} label="Reports" badge="Soon" onClick={() => setActiveView('reports')} />
+          <NavItem active={activeView === 'reports'} icon={<ChartIcon />} label="Reports" onClick={() => setActiveView('reports')} />
           {canManageOrganisation && <NavItem active={activeView === 'organisation'} icon={<SettingsIcon />} label="Organisation" badge="Soon" onClick={() => setActiveView('organisation')} />}
         </nav>
         <div className="sidebar-bottom">
@@ -635,6 +963,32 @@ export default function PortalPage() {
             onSearch={setApprovalSearch}
             departments={approvalDepartments}
             onSelect={setSelectedApproval}
+          />
+        ) : activeView === 'reports' ? (
+          <ReportsWorkspace
+            rows={filteredReportRows}
+            loading={reportLoading}
+            error={reportError}
+            canReview={canReview}
+            scope={canReview ? reportScope : 'mine'}
+            onScope={setReportScope}
+            startDate={reportStartDate}
+            endDate={reportEndDate}
+            onStartDate={setReportStartDate}
+            onEndDate={setReportEndDate}
+            datePreset={reportDatePreset}
+            onDatePreset={setReportDatePreset}
+            statusFilter={reportStatusFilter}
+            onStatusFilter={setReportStatusFilter}
+            departmentFilter={reportDepartmentFilter}
+            onDepartmentFilter={(department) => {
+              setReportDepartmentFilter(department);
+              setReportEmployeeFilter('all');
+            }}
+            departments={reportDepartments}
+            employeeFilter={reportEmployeeFilter}
+            onEmployeeFilter={setReportEmployeeFilter}
+            employees={reportEmployees}
           />
         ) : <ComingSoon view={activeView} />}
       </section>
@@ -747,6 +1101,290 @@ function AttendanceWorkspace({
     </section>
   </div>;
 }
+
+type ReportsWorkspaceProps = {
+  rows: ReportRow[];
+  loading: boolean;
+  error: string | null;
+  canReview: boolean;
+  scope: ReportScope;
+  onScope: (scope: ReportScope) => void;
+  startDate: string;
+  endDate: string;
+  onStartDate: (value: string) => void;
+  onEndDate: (value: string) => void;
+  datePreset: ReportDatePreset;
+  onDatePreset: (value: ReportDatePreset) => void;
+  statusFilter: ReportStatusFilter;
+  onStatusFilter: (value: ReportStatusFilter) => void;
+  departmentFilter: string;
+  onDepartmentFilter: (value: string) => void;
+  departments: string[];
+  employeeFilter: string;
+  onEmployeeFilter: (value: string) => void;
+  employees: Profile[];
+};
+
+function ReportsWorkspace({
+  rows,
+  loading,
+  error,
+  canReview,
+  scope,
+  onScope,
+  startDate,
+  endDate,
+  onStartDate,
+  onEndDate,
+  datePreset,
+  onDatePreset,
+  statusFilter,
+  onStatusFilter,
+  departmentFilter,
+  onDepartmentFilter,
+  departments,
+  employeeFilter,
+  onEmployeeFilter,
+  employees,
+}: ReportsWorkspaceProps) {
+  const [currentPage, setCurrentPage] = useState(1);
+  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  const [employeeQuery, setEmployeeQuery] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState<'csv' | 'pdf' | null>(null);
+  const pageSize = 10;
+  const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(currentPage, pageCount);
+  const pagedRows = rows.slice((safePage - 1) * pageSize, safePage * pageSize);
+  const reportMetrics = useMemo(() => {
+    const completed = rows.filter((row) => row.attendance.status === 'completed');
+    const workedMinutes = completed.reduce((total, row) => total + (workMinutes(row.attendance) || 0), 0);
+    return {
+      records: rows.length,
+      completed: completed.length,
+      exceptions: rows.filter((row) => ['missed_punch', 'correction_pending'].includes(row.attendance.status)).length,
+      absent: rows.filter((row) => row.attendance.status === 'absent').length,
+      leave: rows.filter((row) => ['on_leave', 'leave_pending'].includes(row.attendance.status)).length,
+      hours: `${Math.floor(workedMinutes / 60)}h ${workedMinutes % 60}m`,
+    };
+  }, [rows]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setExpandedRecordId(null);
+  }, [startDate, endDate, statusFilter, departmentFilter, employeeFilter, scope]);
+
+  const selectedEmployee = employees.find((employee) => employee.id === employeeFilter);
+
+  useEffect(() => {
+    setEmployeeQuery(selectedEmployee ? employeePickerLabel(selectedEmployee) : '');
+  }, [selectedEmployee]);
+
+  const applyRange = (preset: ReportDatePreset, range: { start: string; end: string }) => {
+    onDatePreset(preset);
+    onStartDate(range.start);
+    onEndDate(range.end);
+  };
+
+  const changeDatePreset = (preset: ReportDatePreset) => {
+    const today = new Date();
+    if (preset === 'custom') {
+      onDatePreset(preset);
+      return;
+    }
+    if (preset === 'today') return applyRange(preset, { start: dateKey(today), end: dateKey(today) });
+    if (preset === 'yesterday') return applyRange(preset, yesterdayRange(today));
+    if (preset === 'this_week') return applyRange(preset, currentWeekRange(today));
+    if (preset === 'last_week') return applyRange(preset, previousWeekRange(today));
+    if (preset === 'this_month') return applyRange(preset, { start: startOfMonthKey(today), end: dateKey(today) });
+    if (preset === 'last_month') return applyRange(preset, previousMonthRange(today));
+    return applyRange(preset, lastThirtyDaysRange(today));
+  };
+
+  const handleEmployeeInput = (value: string) => {
+    setEmployeeQuery(value);
+    if (!value || value === 'All employees') {
+      onEmployeeFilter('all');
+      return;
+    }
+    const selected = employees.find((employee) => employeePickerLabel(employee) === value);
+    onEmployeeFilter(selected?.id || 'all');
+  };
+
+  const exportFile = async (format: 'csv' | 'pdf') => {
+    setExporting(format);
+    try {
+      if (format === 'csv') exportReportCsv(rows, startDate, endDate);
+      else await exportReportPdf(rows, startDate, endDate);
+      setExportOpen(false);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  return <div className="page-content">
+    <section className="reports-toolbar">
+      <div>
+        <p className="eyebrow">ATTENDANCE REPORTS</p>
+      </div>
+      {canReview && <div className="attendance-scope-tabs report-scope-tabs" role="tablist" aria-label="Report scope">
+        <button className={scope === 'mine' ? 'active' : ''} role="tab" aria-selected={scope === 'mine'} onClick={() => onScope('mine')}>My records</button>
+        <button className={scope === 'team' ? 'active' : ''} role="tab" aria-selected={scope === 'team'} onClick={() => onScope('team')}>Team records</button>
+      </div>}
+    </section>
+
+    <section className="register-panel report-panel">
+      <div className="report-controls">
+        <label className="filter-field report-date-field">Date range<select value={datePreset} onChange={(event) => changeDatePreset(event.target.value as ReportDatePreset)}><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="this_week">This week</option><option value="last_week">Last week</option><option value="this_month">This month</option><option value="last_month">Last month</option><option value="last_30_days">Last 30 days</option><option value="custom">Custom range</option></select></label>
+        <label className="filter-field report-date-field">From<input type="date" value={startDate} max={endDate} onChange={(event) => { onDatePreset('custom'); onStartDate(event.target.value); }} /></label>
+        <label className="filter-field report-date-field">To<input type="date" value={endDate} min={startDate} onChange={(event) => { onDatePreset('custom'); onEndDate(event.target.value); }} /></label>
+        <div className="report-export-menu">
+          <button className="report-export" type="button" disabled={!rows.length || exporting !== null} onClick={() => setExportOpen((open) => !open)} aria-expanded={exportOpen}><ShareIcon size={18} /> {exporting ? 'Preparing...' : 'Export'}</button>
+          {exportOpen && <div className="report-export-options"><button type="button" disabled={exporting !== null} onClick={() => void exportFile('csv')}>Export CSV</button><button type="button" disabled={exporting !== null} onClick={() => void exportFile('pdf')}>Export PDF</button></div>}
+        </div>
+      </div>
+      <div className="register-filters">
+        <label className="filter-field">Status<select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as ReportStatusFilter)}><option value="all">All statuses</option><option value="completed">Completed</option><option value="on_duty">On duty</option><option value="exception">Exceptions</option><option value="absent">No clock in</option><option value="leave">On leave</option></select></label>
+        <label className="filter-field">Department<select value={departmentFilter} onChange={(event) => onDepartmentFilter(event.target.value)}><option value="all">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
+        <label className="filter-field employee-filter">Employee<input list="report-employee-options" value={employeeQuery} onChange={(event) => handleEmployeeInput(event.target.value)} onBlur={() => { if (employeeQuery && !employees.some((employee) => employeePickerLabel(employee) === employeeQuery)) setEmployeeQuery(selectedEmployee ? employeePickerLabel(selectedEmployee) : ''); }} placeholder="All employees" /><datalist id="report-employee-options"><option value="All employees" />{employees.map((employee) => <option key={employee.id} value={employeePickerLabel(employee)} />)}</datalist></label>
+      </div>
+      <section className="report-metric-grid">
+        <ReportMetric label="Records" value={reportMetrics.records} tone="ink" />
+        <ReportMetric label="Completed" value={reportMetrics.completed} tone="green" />
+        <ReportMetric label="Exceptions" value={reportMetrics.exceptions} tone="amber" />
+        <ReportMetric label="No clock in" value={reportMetrics.absent} tone="red" />
+        <ReportMetric label="On leave" value={reportMetrics.leave} tone="purple" />
+        <ReportMetric label="Completed hours" value={reportMetrics.hours} tone="blue" />
+      </section>
+      {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <ReportEmptyState /> : <>
+        <div className="table-wrap"><table className="report-table"><thead><tr><th>Date</th><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Office</th><th>Location</th></tr></thead><tbody>{pagedRows.map((row) => <ReportRowItem key={row.attendance.id} row={row} expanded={expandedRecordId === row.attendance.id} onToggle={() => setExpandedRecordId((current) => current === row.attendance.id ? null : row.attendance.id)} />)}</tbody></table></div>
+        {rows.length > pageSize && <div className="table-pagination"><span>Page {safePage} of {pageCount}</span><div><button type="button" disabled={safePage === 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>Previous</button><button type="button" disabled={safePage === pageCount} onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}>Next</button></div></div>}
+      </>}
+    </section>
+  </div>;
+}
+
+function ReportMetric({ label, value, tone }: { label: string; value: string | number; tone: string }) {
+  return <article className={`report-metric ${tone}`}><span>{label}</span><strong>{value}</strong></article>;
+}
+
+function ReportRowItem({ row, expanded, onToggle }: { row: ReportRow; expanded: boolean; onToggle: () => void }) {
+  const status = row.attendance.status;
+  const comment = row.attendance.clock_in_comment || row.attendance.clock_out_comment;
+  return <Fragment>
+    <tr className="report-row-clickable" tabIndex={0} role="button" aria-expanded={expanded} onClick={onToggle} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onToggle(); } }}>
+      <td>{displayDate(row.attendance.work_date)}</td>
+      <td><div className="employee-cell"><span className="table-avatar">{row.profile.full_name.slice(0, 1)}</span><span><strong>{row.profile.full_name}</strong><small>{row.profile.employee_id}</small></span></div></td>
+      <td>{row.profile.department || 'Unassigned'}</td>
+      <td><span className={`status ${statusTone(status)}`}>{statusLabel[status] || status}</span></td>
+      <td>{formatTime(row.attendance.clock_in)}</td>
+      <td>{formatTime(row.attendance.clock_out)}</td>
+      <td>{workHours(row.attendance)}</td>
+      <td>{row.officeName || 'No office'}</td>
+      <td>{locationStatusLabel(row.attendance.clock_in_location_status)}</td>
+    </tr>
+    {expanded && <tr className="report-inline-detail-row"><td colSpan={9}><div className="report-inline-detail-grid">
+      <div><span>Clock-in location</span><strong>{locationStatusLabel(row.attendance.clock_in_location_status)}</strong></div>
+      <div><span>Clock-out location</span><strong>{locationStatusLabel(row.attendance.clock_out_location_status)}</strong></div>
+      <div><span>Clock-in accuracy</span><strong>{row.attendance.clock_in_accuracy_m ? `${Math.round(row.attendance.clock_in_accuracy_m)} m` : '--'}</strong></div>
+      <div><span>Clock-out accuracy</span><strong>{row.attendance.clock_out_accuracy_m ? `${Math.round(row.attendance.clock_out_accuracy_m)} m` : '--'}</strong></div>
+      {comment && <div className="report-inline-comment"><span>Attendance comment</span><strong>{comment}</strong></div>}
+    </div></td></tr>}
+  </Fragment>;
+}
+
+function EmployeeReportWorkspace({
+  profile,
+  rows,
+  startDate,
+  endDate,
+  onBack,
+}: {
+  profile: Profile;
+  rows: ReportRow[];
+  startDate: string;
+  endDate: string;
+  onBack: () => void;
+}) {
+  const [expandedRecordId, setExpandedRecordId] = useState<string | null>(null);
+  const [exporting, setExporting] = useState<'xlsx' | 'pdf' | null>(null);
+  const sortedRows = useMemo(() => [...rows].sort((left, right) => left.attendance.work_date.localeCompare(right.attendance.work_date)), [rows]);
+  const completedMinutes = sortedRows.reduce((total, row) => total + (workMinutes(row.attendance) || 0), 0);
+  const completedCount = sortedRows.filter((row) => row.attendance.status === 'completed').length;
+
+  const exportFile = async (format: 'xlsx' | 'pdf') => {
+    setExporting(format);
+    try {
+      if (format === 'xlsx') await exportEmployeeReportXlsx(profile, sortedRows, startDate, endDate);
+      else await exportEmployeeReportPdf(profile, sortedRows, startDate, endDate);
+    } finally {
+      setExporting(null);
+    }
+  };
+
+  return <div className="page-content employee-report-view">
+    <section className="employee-report-header">
+      <div>
+        <button type="button" className="back-to-reports" onClick={onBack}>&larr; Back to reports</button>
+        <p className="eyebrow">EMPLOYEE ATTENDANCE</p>
+        <h2>WorkPulse Attendance Report</h2>
+        <p>{displayDate(startDate)} - {displayDate(endDate)}</p>
+      </div>
+      <div className="employee-report-actions print-hidden">
+        <button type="button" className="secondary-button" onClick={() => window.print()}>Print</button>
+        <button type="button" className="secondary-button" disabled={exporting !== null} onClick={() => void exportFile('xlsx')}>{exporting === 'xlsx' ? 'Preparing Excel...' : 'Download Excel'}</button>
+        <button type="button" className="report-export" disabled={exporting !== null} onClick={() => void exportFile('pdf')}>{exporting === 'pdf' ? 'Preparing PDF...' : 'Download PDF'}</button>
+      </div>
+    </section>
+
+    <section className="employee-report-profile">
+      <div className="employee-report-avatar">{profile.full_name.slice(0, 1)}</div>
+      <div><p className="eyebrow">EMPLOYEE</p><h3>{profile.full_name}</h3><p>{profile.employee_id}</p></div>
+      <div className="employee-report-meta"><span>Department</span><strong>{profile.department || 'Unassigned'}</strong></div>
+      <div className="employee-report-meta"><span>Job title</span><strong>{profile.job_title || 'Not recorded'}</strong></div>
+    </section>
+
+    <section className="employee-report-summary">
+      <ReportMetric label="Attendance records" value={sortedRows.length} tone="ink" />
+      <ReportMetric label="Completed days" value={completedCount} tone="green" />
+      <ReportMetric label="Completed hours" value={`${Math.floor(completedMinutes / 60)}h ${completedMinutes % 60}m`} tone="blue" />
+      <ReportMetric label="Exceptions" value={sortedRows.filter((row) => ['missed_punch', 'correction_pending'].includes(row.attendance.status)).length} tone="amber" />
+    </section>
+
+    <section className="register-panel employee-report-panel">
+      <div className="register-head employee-report-head">
+        <div><p className="eyebrow">ATTENDANCE RECORDS</p><h2>Daily attendance</h2></div>
+        <span>{sortedRows.length} record{sortedRows.length === 1 ? '' : 's'}</span>
+      </div>
+      {sortedRows.length === 0 ? <ReportEmptyState /> : <div className="table-wrap"><table className="employee-report-table"><thead><tr><th>Date</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Completed hours</th><th>Office</th><th className="print-hidden"></th></tr></thead><tbody>{sortedRows.map((row) => {
+        const isExpanded = expandedRecordId === row.attendance.id;
+        const comment = row.attendance.clock_out_comment || row.attendance.clock_in_comment;
+        return <Fragment key={row.attendance.id}>
+          <tr>
+            <td>{displayDate(row.attendance.work_date)}</td>
+            <td><span className={`status ${statusTone(row.attendance.status)}`}>{statusLabel[row.attendance.status] || row.attendance.status}</span></td>
+            <td>{formatTime(row.attendance.clock_in)}</td>
+            <td>{formatTime(row.attendance.clock_out)}</td>
+            <td>{workHours(row.attendance)}</td>
+            <td>{row.officeName || 'No office'}</td>
+            <td className="print-hidden"><button type="button" className="report-details-button" onClick={() => setExpandedRecordId(isExpanded ? null : row.attendance.id)}>{isExpanded ? 'Hide details' : 'View details'}</button></td>
+          </tr>
+          {isExpanded && <tr className="employee-report-detail-row"><td colSpan={7}>
+            <div className="employee-report-detail-grid">
+              <div><span>Clock-in location</span><strong>{locationStatusLabel(row.attendance.clock_in_location_status)}</strong></div>
+              <div><span>Clock-out location</span><strong>{locationStatusLabel(row.attendance.clock_out_location_status)}</strong></div>
+              <div><span>Clock-in distance</span><strong>{distanceLabel(row.attendance.clock_in_distance_m)}</strong></div>
+              <div><span>Clock-out distance</span><strong>{distanceLabel(row.attendance.clock_out_distance_m)}</strong></div>
+              {comment && <div className="employee-report-comment"><span>Comment</span><strong>{comment}</strong></div>}
+            </div>
+          </td></tr>}
+        </Fragment>;
+      })}</tbody></table></div>}
+    </section>
+  </div>;
+}
+
+function ReportEmptyState() { return <div className="state"><strong>No attendance records found</strong><span>Try a broader date range or change the current report filters.</span></div>; }
 
 type ApprovalsWorkspaceProps = {
   items: ApprovalItem[];

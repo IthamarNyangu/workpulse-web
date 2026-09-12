@@ -31,3 +31,7 @@ export function ArrowIcon({ size = 18, stroke = 2 }: IconProps) {
 export function SearchIcon({ size = 20, stroke = 2 }: IconProps) {
   return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></svg>;
 }
+
+export function ShareIcon({ size = 20, stroke = 2 }: IconProps) {
+  return <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke="currentColor" strokeWidth={stroke} strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="2.5"/><circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="19" r="2.5"/><path d="m8.2 10.8 7.6-4.4M8.2 13.2l7.6 4.4"/></svg>;
+}
