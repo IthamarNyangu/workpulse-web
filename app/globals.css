@@ -261,3 +261,42 @@ button { cursor:pointer; }
   .employee-report-profile { align-items:flex-start; flex-wrap:wrap; padding:18px; }.employee-report-meta { min-width:calc(50% - 7px); margin-left:0; padding:12px 0 0; border-top:1px solid var(--line); border-left:0; }.employee-report-meta + .employee-report-meta { padding-left:12px; }
   .employee-report-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }.employee-report-detail-grid { grid-template-columns:1fr; }.employee-report-detail-grid .employee-report-comment { grid-column:auto; }
 }
+
+/* Organisation workspace: desktop management visibility without duplicating mobile edits. */
+.organisation-page { padding-bottom:48px; }
+.organisation-hero { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:27px 30px; border:1px solid #dce7df; border-radius:18px; background:#f3f6f4; }
+.organisation-hero h2 { margin:6px 0 7px; color:var(--ink); font-size:29px; letter-spacing:-1px; }
+.organisation-hero p:not(.eyebrow) { max-width:650px; margin:0; color:var(--ink-soft); font-size:14px; font-weight:700; }
+.organisation-summary { min-width:155px; padding:15px 17px; border:1px solid #d4e2d7; border-radius:13px; background:#fff; display:grid; gap:4px; }
+.organisation-summary span { color:var(--ink-soft); font-size:11px; font-weight:900; letter-spacing:.5px; text-transform:uppercase; }
+.organisation-summary strong { color:var(--green-deep); font-size:24px; }
+.organisation-metrics { grid-template-columns:repeat(4,minmax(0,1fr)); margin-top:22px; }
+.organisation-panel { margin-top:22px; }
+.organisation-head { align-items:center; }
+.organisation-search { max-width:470px; }
+.organisation-search button { display:grid; width:24px; height:24px; place-items:center; border:0; border-radius:50%; background:#edf2ef; color:#536176; cursor:pointer; font-size:18px; line-height:1; }
+.organisation-search button:hover { background:#dcebe0; color:var(--green-deep); }
+.organisation-tabs { display:flex; gap:9px; padding:15px 25px; overflow-x:auto; border-bottom:1px solid var(--line); background:#fcfdfc; }
+.organisation-tab { flex:0 0 auto; border:1px solid #d2ddd5; border-radius:999px; background:#fff; color:#536176; padding:8px 13px; font-size:12px; font-weight:900; cursor:pointer; }
+.organisation-tab:hover { border-color:#89b99a; color:var(--green-deep); }
+.organisation-tab.active { border-color:var(--green); background:var(--green); color:#fff; }
+.organisation-tab span { margin-left:6px; font-size:11px; opacity:.78; }
+.organisation-tab.active span { opacity:.9; }
+.organisation-table { min-width:750px; }
+.organisation-table td { vertical-align:middle; }
+.organisation-empty { min-height:230px; padding:30px; display:grid; place-content:center; gap:8px; text-align:center; color:var(--ink-soft); }
+.organisation-empty strong { color:var(--ink); font-size:17px; }
+
+@media (max-width:980px) {
+  .organisation-hero { align-items:flex-start; flex-direction:column; }
+  .organisation-summary { min-width:0; width:100%; }
+  .organisation-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .organisation-head { align-items:stretch; flex-direction:column; }
+  .organisation-search { max-width:none; width:100%; }
+}
+
+@media (max-width:620px) {
+  .organisation-hero { padding:21px 18px; }.organisation-hero h2 { font-size:25px; }
+  .organisation-metrics { gap:10px; }.organisation-tabs { padding:13px 16px; }
+  .organisation-tab { padding:8px 11px; }.organisation-empty { min-height:190px; }
+}

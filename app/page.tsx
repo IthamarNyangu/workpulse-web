@@ -16,7 +16,17 @@ import {
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import type { ApprovalItem, AttendanceRecord, CorrectionRequest, LeaveRequest, Profile, TeamRow, WorkPulseRole } from '../lib/types';
 
-type Office = { id: string; office_name: string };
+type Office = {
+  id: string;
+  office_name: string;
+  province?: string | null;
+  district?: string | null;
+  radius_m?: number | null;
+  is_active?: boolean;
+};
+type Department = { id: string; name: string; is_active: boolean };
+type JobTitle = { id: string; name: string; is_active: boolean };
+type OrganisationTab = 'employees' | 'departments' | 'job_titles' | 'offices';
 type PortalView = 'attendance' | 'approvals' | 'reports' | 'organisation';
 type StatusFilter = 'all' | 'attention' | 'on_duty' | 'completed' | 'leave' | 'location';
 type AttendanceScope = 'mine' | 'team';
@@ -360,6 +370,12 @@ export default function PortalPage() {
   const [reportDepartmentFilter, setReportDepartmentFilter] = useState('all');
   const [reportEmployeeFilter, setReportEmployeeFilter] = useState('all');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [organisationProfiles, setOrganisationProfiles] = useState<Profile[]>([]);
+  const [organisationDepartments, setOrganisationDepartments] = useState<Department[]>([]);
+  const [organisationJobTitles, setOrganisationJobTitles] = useState<JobTitle[]>([]);
+  const [organisationOffices, setOrganisationOffices] = useState<Office[]>([]);
+  const [organisationLoading, setOrganisationLoading] = useState(false);
+  const [organisationError, setOrganisationError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -375,6 +391,11 @@ export default function PortalPage() {
         setSelectedApproval(null);
         setReportRows([]);
         setReportError(null);
+        setOrganisationProfiles([]);
+        setOrganisationDepartments([]);
+        setOrganisationJobTitles([]);
+        setOrganisationOffices([]);
+        setOrganisationError(null);
       }
     });
     return () => subscription.subscription.unsubscribe();
@@ -410,6 +431,14 @@ export default function PortalPage() {
   // Report range, scope, and role changes intentionally refresh the report data.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeView, profile?.id, reportEndDate, reportScope, reportStartDate, roles.join('|'), session?.user.id]);
+
+  useEffect(() => {
+    const canManageOrganisation = roles.some((role) => role === 'hr' || role === 'admin');
+    if (!session?.user || !supabase || activeView !== 'organisation' || !canManageOrganisation) return;
+    void loadOrganisationData();
+  // Organisation data is fetched only when this desktop workspace is opened.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, roles.join('|'), session?.user.id]);
 
   async function loadPortalData() {
     if (!supabase || !session?.user) return;
@@ -694,6 +723,39 @@ export default function PortalPage() {
     }
   }
 
+  async function loadOrganisationData() {
+    if (!supabase || !session?.user) return;
+    setOrganisationLoading(true);
+    setOrganisationError(null);
+    try {
+      const [profilesResponse, departmentsResponse, jobTitlesResponse, officesResponse] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, employee_id, full_name, email, role, department, job_title, is_active')
+          .order('full_name'),
+        supabase.from('departments').select('id, name, is_active').order('name'),
+        supabase.from('job_titles').select('id, name, is_active').order('name'),
+        supabase
+          .from('office_locations')
+          .select('id, office_name, province, district, radius_m, is_active')
+          .order('office_name'),
+      ]);
+      if (profilesResponse.error) throw profilesResponse.error;
+      if (departmentsResponse.error) throw departmentsResponse.error;
+      if (jobTitlesResponse.error) throw jobTitlesResponse.error;
+      if (officesResponse.error) throw officesResponse.error;
+
+      setOrganisationProfiles((profilesResponse.data || []) as Profile[]);
+      setOrganisationDepartments((departmentsResponse.data || []) as Department[]);
+      setOrganisationJobTitles((jobTitlesResponse.data || []) as JobTitle[]);
+      setOrganisationOffices((officesResponse.data || []) as Office[]);
+    } catch (caught) {
+      setOrganisationError(caught instanceof Error ? caught.message : 'WorkPulse could not load organisation data.');
+    } finally {
+      setOrganisationLoading(false);
+    }
+  }
+
   async function handleApprovalDecision(item: ApprovalItem, decision: 'approved' | 'rejected', reviewerNote: string) {
     if (!supabase || !profile || item.status !== 'pending') return false;
     if (decision === 'rejected' && !reviewerNote.trim()) return false;
@@ -915,7 +977,7 @@ export default function PortalPage() {
           <NavItem active={activeView === 'attendance'} icon={<GridIcon />} label="Attendance" onClick={() => setActiveView('attendance')} />
           {canReview && <NavItem active={activeView === 'approvals'} icon={<ClipboardIcon />} label="Approvals" onClick={() => setActiveView('approvals')} />}
           <NavItem active={activeView === 'reports'} icon={<ChartIcon />} label="Reports" onClick={() => setActiveView('reports')} />
-          {canManageOrganisation && <NavItem active={activeView === 'organisation'} icon={<SettingsIcon />} label="Organisation" badge="Soon" onClick={() => setActiveView('organisation')} />}
+          {canManageOrganisation && <NavItem active={activeView === 'organisation'} icon={<SettingsIcon />} label="Organisation" onClick={() => setActiveView('organisation')} />}
         </nav>
         <div className="sidebar-bottom">
           <div className="user-chip"><span className="avatar">{profile?.full_name.slice(0, 1)}</span><span><strong>{profile?.full_name}</strong><small>{roles.map((role) => roleLabel[role]).join(' / ')}</small></span></div>
@@ -990,7 +1052,14 @@ export default function PortalPage() {
             onEmployeeFilter={setReportEmployeeFilter}
             employees={reportEmployees}
           />
-        ) : <ComingSoon view={activeView} />}
+        ) : <OrganisationWorkspace
+          profiles={organisationProfiles}
+          departments={organisationDepartments}
+          jobTitles={organisationJobTitles}
+          offices={organisationOffices}
+          loading={organisationLoading}
+          error={organisationError}
+        />}
       </section>
       {selectedRow && <AttendanceDetails row={selectedRow} onClose={() => setSelectedRow(null)} />}
       {selectedApproval && <ApprovalDetails item={selectedApproval} onClose={() => setSelectedApproval(null)} onDecision={handleApprovalDecision} />}
@@ -1591,9 +1660,115 @@ function LoadingState() { return <div className="state"><div className="loader" 
 function ErrorState({ message }: { message: string }) { return <div className="state error"><strong>Unable to load attendance</strong><span>{message}</span></div>; }
 function EmptyState() { return <div className="state"><strong>No team records found</strong><span>Try a different date or remove the current filter.</span></div>; }
 
-function ComingSoon({ view }: { view: PortalView }) {
-  return <div className="page-content"><section className="coming-soon"><p className="eyebrow">NEXT WEB MILESTONE</p><h2>{viewTitle(view)}</h2><p>This section is reserved in the web shell. The next implementation increment will add the working desktop flow while retaining the existing mobile functionality.</p></section></div>;
+function OrganisationWorkspace({
+  profiles,
+  departments,
+  jobTitles,
+  offices,
+  loading,
+  error,
+}: {
+  profiles: Profile[];
+  departments: Department[];
+  jobTitles: JobTitle[];
+  offices: Office[];
+  loading: boolean;
+  error: string | null;
+}) {
+  const [tab, setTab] = useState<OrganisationTab>('employees');
+  const [query, setQuery] = useState('');
+  const [page, setPage] = useState(0);
+  const pageSize = 10;
+
+  const filteredProfiles = useMemo(() => {
+    const needle = query.trim().toLowerCase();
+    if (!needle) return profiles;
+    return profiles.filter((person) => [
+      person.full_name,
+      person.employee_id,
+      person.email,
+      person.department,
+      person.job_title,
+      roleLabel[person.role],
+    ].filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
+  }, [profiles, query]);
+
+  const filteredDepartments = useMemo(() => filterOrganisationItems(departments, query, (item) => [item.name]), [departments, query]);
+  const filteredJobTitles = useMemo(() => filterOrganisationItems(jobTitles, query, (item) => [item.name]), [jobTitles, query]);
+  const filteredOffices = useMemo(() => filterOrganisationItems(offices, query, (item) => [item.office_name, item.province, item.district]), [offices, query]);
+  const selectedItems = tab === 'employees'
+    ? filteredProfiles
+    : tab === 'departments'
+      ? filteredDepartments
+      : tab === 'job_titles'
+        ? filteredJobTitles
+        : filteredOffices;
+  const totalPages = Math.max(1, Math.ceil(selectedItems.length / pageSize));
+  const visibleItems = selectedItems.slice(page * pageSize, page * pageSize + pageSize);
+
+  useEffect(() => setPage(0), [query, tab]);
+  useEffect(() => {
+    if (page >= totalPages) setPage(totalPages - 1);
+  }, [page, totalPages]);
+
+  const employeeCountForDepartment = (departmentName: string) => profiles.filter((person) => person.department === departmentName).length;
+  const employeeCountForTitle = (titleName: string) => profiles.filter((person) => person.job_title === titleName).length;
+
+  return <div className="page-content organisation-page">
+    <section className="organisation-hero">
+      <div><p className="eyebrow">ORGANISATION</p><h2>People, structure and work sites</h2><p>Review the current WorkPulse organisation setup from one desktop workspace.</p></div>
+      <div className="organisation-summary"><span>Active employees</span><strong>{profiles.filter((person) => person.is_active).length}</strong></div>
+    </section>
+    <section className="metric-grid organisation-metrics">
+      <Metric label="Employees" value={profiles.length} tone="blue" />
+      <Metric label="Departments" value={departments.filter((department) => department.is_active).length} tone="green" />
+      <Metric label="Job titles" value={jobTitles.filter((jobTitle) => jobTitle.is_active).length} tone="purple" />
+      <Metric label="Work sites" value={offices.filter((office) => office.is_active !== false).length} tone="amber" />
+    </section>
+    <section className="register-panel organisation-panel">
+      <div className="register-head organisation-head">
+        <div><p className="eyebrow">DIRECTORY</p><h2>{organisationTabLabel(tab)}</h2></div>
+        <label className="search-box organisation-search"><SearchIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={organisationSearchPlaceholder(tab)} aria-label={`Search ${organisationTabLabel(tab).toLowerCase()}`} />{query && <button type="button" className="clear-search" onClick={() => setQuery('')} aria-label="Clear search">x</button>}</label>
+      </div>
+      <div className="organisation-tabs" role="tablist" aria-label="Organisation data">
+        <OrganisationTabButton active={tab === 'employees'} label="Employees" count={profiles.length} onClick={() => setTab('employees')} />
+        <OrganisationTabButton active={tab === 'departments'} label="Departments" count={departments.length} onClick={() => setTab('departments')} />
+        <OrganisationTabButton active={tab === 'job_titles'} label="Job titles" count={jobTitles.length} onClick={() => setTab('job_titles')} />
+        <OrganisationTabButton active={tab === 'offices'} label="Office locations" count={offices.length} onClick={() => setTab('offices')} />
+      </div>
+      {loading ? <OrganisationLoadingState /> : error ? <OrganisationErrorState message={error} /> : <>
+        <div className="table-wrap organisation-table-wrap">
+          {tab === 'employees' ? <table><thead><tr><th>Employee</th><th>Department</th><th>Job title</th><th>Access</th><th>Account</th></tr></thead><tbody>{(visibleItems as Profile[]).map((person) => <tr key={person.id}><td><div className="employee-cell"><span className="table-avatar">{person.full_name.slice(0, 1)}</span><span><strong>{person.full_name}</strong><small>{person.employee_id} / {person.email}</small></span></div></td><td>{person.department || 'Unassigned'}</td><td>{person.job_title || 'Not assigned'}</td><td>{roleLabel[person.role]}</td><td><span className={`status ${person.is_active ? 'green' : 'slate'}`}>{person.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
+          {tab === 'departments' ? <table><thead><tr><th>Department</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as Department[]).map((department) => <tr key={department.id}><td><strong>{department.name}</strong></td><td>{employeeCountForDepartment(department.name)}</td><td><span className={`status ${department.is_active ? 'green' : 'slate'}`}>{department.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
+          {tab === 'job_titles' ? <table><thead><tr><th>Job title</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as JobTitle[]).map((jobTitle) => <tr key={jobTitle.id}><td><strong>{jobTitle.name}</strong></td><td>{employeeCountForTitle(jobTitle.name)}</td><td><span className={`status ${jobTitle.is_active ? 'green' : 'slate'}`}>{jobTitle.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
+          {tab === 'offices' ? <table><thead><tr><th>Office location</th><th>Province</th><th>District</th><th>Allowed radius</th><th>Status</th></tr></thead><tbody>{(visibleItems as Office[]).map((office) => <tr key={office.id}><td><strong>{office.office_name}</strong></td><td>{office.province || '--'}</td><td>{office.district || '--'}</td><td>{office.radius_m ? `${Math.round(office.radius_m)} m` : '--'}</td><td><span className={`status ${office.is_active === false ? 'slate' : 'green'}`}>{office.is_active === false ? 'Inactive' : 'Active'}</span></td></tr>)}</tbody></table> : null}
+        </div>
+        {selectedItems.length === 0 ? <div className="state organisation-empty"><strong>No {organisationTabLabel(tab).toLowerCase()} found</strong><span>Try a different search term.</span></div> : <div className="table-pagination"><span>{selectedItems.length} {organisationTabLabel(tab).toLowerCase()}</span><div><button type="button" disabled={page === 0} onClick={() => setPage((current) => Math.max(0, current - 1))}>Previous</button><span>Page {page + 1} of {totalPages}</span><button type="button" disabled={page >= totalPages - 1} onClick={() => setPage((current) => Math.min(totalPages - 1, current + 1))}>Next</button></div></div>}
+      </>}
+    </section>
+  </div>;
 }
+
+function filterOrganisationItems<T>(items: T[], query: string, values: (item: T) => Array<string | null | undefined>) {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return items;
+  return items.filter((item) => values(item).filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
+}
+
+function organisationTabLabel(tab: OrganisationTab) {
+  return ({ employees: 'Employees', departments: 'Departments', job_titles: 'Job titles', offices: 'Office locations' })[tab];
+}
+
+function organisationSearchPlaceholder(tab: OrganisationTab) {
+  return ({ employees: 'Search name, ID, email, department or job title', departments: 'Search departments', job_titles: 'Search job titles', offices: 'Search office, province or district' })[tab];
+}
+
+function OrganisationTabButton({ active, label, count, onClick }: { active: boolean; label: string; count: number; onClick: () => void }) {
+  return <button type="button" className={`organisation-tab ${active ? 'active' : ''}`} role="tab" aria-selected={active} onClick={onClick}>{label}<span>{count}</span></button>;
+}
+
+function OrganisationLoadingState() { return <div className="state"><div className="loader" /><strong>Loading organisation data</strong><span>Applying your HR and administrator access.</span></div>; }
+function OrganisationErrorState({ message }: { message: string }) { return <div className="state error"><strong>Unable to load organisation data</strong><span>{message}</span></div>; }
 
 function viewTitle(view: PortalView) {
   return ({ attendance: 'Attendance', approvals: 'Approvals', reports: 'Reports', organisation: 'Organisation' })[view];
