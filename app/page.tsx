@@ -5,6 +5,7 @@ import type { ReactNode } from 'react';
 import type { Session } from '@supabase/supabase-js';
 import {
   ArrowIcon,
+  BellIcon,
   ChartIcon,
   ClipboardIcon,
   GridIcon,
@@ -380,6 +381,8 @@ export default function PortalPage() {
   const [activeView, setActiveView] = useState<PortalView>('attendance');
   const [requestSection, setRequestSection] = useState<'corrections' | 'leave'>('corrections');
   const [requestsNavExpanded, setRequestsNavExpanded] = useState(false);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const notificationMenuRef = useRef<HTMLDivElement>(null);
   const [attendanceScope, setAttendanceScope] = useState<AttendanceScope>('team');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -468,22 +471,31 @@ export default function PortalPage() {
   }, [attendanceScope, session?.user.id, selectedDate]);
 
   useEffect(() => {
-    if (!session?.user || !supabase || activeView !== 'requests') return;
+    if (!session?.user || !supabase) return;
     void loadMyRequestsData();
-  // My Requests loads only when the employee request centre is opened.
+  // Request actions also power global notification badges.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, session?.user.id]);
+  }, [session?.user.id]);
 
   useEffect(() => {
     const canReviewRequests = roles.some((role) => role === 'supervisor' || role === 'hr' || role === 'admin');
-    if (!session?.user || !supabase || activeView !== 'approvals' || !canReviewRequests) {
+    if (!session?.user || !supabase || !canReviewRequests) {
       if (!canReviewRequests) setApprovalItems([]);
       return;
     }
     void loadApprovalData();
-  // Access role changes are an intentional refresh trigger for the approval inbox.
+  // Approval actions also power global notification badges.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeView, roles.join('|'), session?.user.id]);
+  }, [roles.join('|'), session?.user.id]);
+
+  useEffect(() => {
+    if (!notificationsOpen) return;
+    const close = (event: MouseEvent) => {
+      if (!notificationMenuRef.current?.contains(event.target as Node)) setNotificationsOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [notificationsOpen]);
 
   useEffect(() => {
     if (!session?.user || !supabase || activeView !== 'reports' || !profile) return;
@@ -1099,6 +1111,8 @@ export default function PortalPage() {
   const canManageOrganisation = roles.some((role) => role === 'hr' || role === 'admin');
   const canReview = roles.some((role) => role === 'supervisor' || role === 'hr' || role === 'admin');
   const resolvedAttendanceScope: AttendanceScope = canReview && attendanceScope === 'team' ? 'team' : 'mine';
+  const pendingApprovalItems = approvalItems.filter((item) => item.status === 'pending');
+  const actionNotificationCount = pendingApprovalItems.length + myNeedActionRecords.length;
 
   if (!portalReady) return <main className="session-loading" aria-label="Loading WorkPulse access"><div className="loader" /></main>;
 
@@ -1120,12 +1134,12 @@ export default function PortalPage() {
         <div className="workspace-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Portal navigation">
           <NavItem active={activeView === 'attendance'} icon={<GridIcon />} label="Attendance" onClick={() => setActiveView('attendance')} />
-          <NavItem active={activeView === 'requests'} icon={<ClipboardIcon />} label="My Requests" onClick={() => { setRequestsNavExpanded((expanded) => !expanded); if (!requestsNavExpanded) setActiveView('requests'); }} />
+          <NavItem active={activeView === 'requests'} icon={<ClipboardIcon />} label="My Requests" badge={myNeedActionRecords.length ? String(myNeedActionRecords.length) : undefined} onClick={() => { setRequestsNavExpanded((expanded) => !expanded); if (!requestsNavExpanded) setActiveView('requests'); }} />
           <div className={`request-subnav ${requestsNavExpanded ? 'open' : ''}`}>
             <button type="button" className={requestSection === 'corrections' && activeView === 'requests' ? 'active' : ''} onClick={() => { setRequestSection('corrections'); setActiveView('requests'); }}><span>Attendance Corrections</span></button>
             <button type="button" className={requestSection === 'leave' && activeView === 'requests' ? 'active' : ''} onClick={() => { setRequestSection('leave'); setActiveView('requests'); }}><span>Leave Requests</span></button>
           </div>
-          {canReview && <NavItem active={activeView === 'approvals'} icon={<ClipboardIcon />} label="Approvals" onClick={() => setActiveView('approvals')} />}
+          {canReview && <NavItem active={activeView === 'approvals'} icon={<ClipboardIcon />} label="Approvals" badge={pendingApprovalItems.length ? String(pendingApprovalItems.length) : undefined} onClick={() => setActiveView('approvals')} />}
           <NavItem active={activeView === 'reports'} icon={<ChartIcon />} label="Reports" onClick={() => setActiveView('reports')} />
           {canManageOrganisation && <NavItem active={activeView === 'organisation'} icon={<SettingsIcon />} label="Organisation" onClick={() => setActiveView('organisation')} />}
         </nav>
@@ -1137,7 +1151,16 @@ export default function PortalPage() {
       <section className="workspace">
         <header className="topbar">
           <div><p className="eyebrow">WORKPULSE PORTAL</p><h1>{viewTitle(activeView)}</h1></div>
-          <div className="topbar-right"><span className="today-label">{displayDate(selectedDate)}</span><button className="date-button" onClick={() => setSelectedDate(dateKey())}>Go to today</button></div>
+          <div className="topbar-right">
+            <div className="notification-menu" ref={notificationMenuRef}>
+              <button type="button" className="notification-button" aria-label={`${actionNotificationCount} notifications requiring action`} aria-expanded={notificationsOpen} onClick={() => setNotificationsOpen((open) => !open)}><BellIcon size={21} />{actionNotificationCount > 0 && <span>{actionNotificationCount > 99 ? '99+' : actionNotificationCount}</span>}</button>
+              {notificationsOpen && <div className="notification-popover"><div className="notification-head"><strong>Notifications</strong><span>{actionNotificationCount} requiring action</span></div>{actionNotificationCount === 0 ? <div className="notification-empty"><strong>You are all caught up</strong><span>No pending actions right now.</span></div> : <div className="notification-list">
+                {pendingApprovalItems.map((item) => <button type="button" key={`approval-${item.kind}-${item.id}`} onClick={() => { setApprovalScope('pending'); setActiveView('approvals'); setSelectedApproval(item); setNotificationsOpen(false); }}><span className="notification-dot amber" /><span><strong>{requestTypeLabel(item)} needs approval</strong><small>{item.requester.full_name} · {formatDateTime(item.created_at)}</small></span><ArrowIcon size={15} /></button>)}
+                {myNeedActionRecords.map((record) => <button type="button" key={`attendance-${record.id}`} onClick={() => { setRequestSection('corrections'); setRequestsNavExpanded(true); setActiveView('requests'); setNotificationsOpen(false); }}><span className="notification-dot red" /><span><strong>{correctionNeedActionLabel(record)}</strong><small>{displayDate(record.work_date)}</small></span><ArrowIcon size={15} /></button>)}
+              </div>}</div>}
+            </div>
+            <span className="today-label">{displayDate(selectedDate)}</span><button className="date-button" onClick={() => setSelectedDate(dateKey())}>Go to today</button>
+          </div>
         </header>
         {activeView === 'attendance' ? (
           <AttendanceWorkspace
