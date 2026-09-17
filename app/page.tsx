@@ -113,7 +113,7 @@ function formatTime(value: string | null | undefined) {
   return new Intl.DateTimeFormat('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   }).format(new Date(value));
 }
 
@@ -183,7 +183,7 @@ function formatDateTime(value: string | null | undefined) {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-    hour12: false,
+    hourCycle: 'h23',
   }).format(new Date(value));
 }
 
@@ -1372,7 +1372,7 @@ function AttendanceWorkspace({
         <label className="filter-field">Status<select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as StatusFilter)}>{statusFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select></label>
         <label className="filter-field">Department<select value={departmentFilter} onChange={(event) => onDepartmentFilter(event.target.value)}><option value="all">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
       </div>
-      {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <EmptyState /> : <><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Verified office</th><th></th></tr></thead><tbody>{pagedRows.map((row) => <AttendanceRow key={row.profile.id} row={row} onView={() => onViewRow(row)} />)}</tbody></table></div>{rows.length > pageSize && <div className="table-pagination"><span>Page {safePage} of {pageCount}</span><div><button type="button" disabled={safePage === 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>Previous</button><button type="button" disabled={safePage === pageCount} onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}>Next</button></div></div>}</>}
+      {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <EmptyState /> : <><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Verified office</th><th></th></tr></thead><tbody>{pagedRows.map((row) => <AttendanceRow key={row.profile.id} row={row} onView={() => onViewRow(row)} />)}</tbody></table></div><PaginationControls page={safePage} pageCount={pageCount} onPage={setCurrentPage} /></>}
     </section>
   </div>;
 }
@@ -1545,7 +1545,7 @@ function ReportsWorkspace({
       </section>
       {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <ReportEmptyState /> : <>
         <div className="table-wrap"><table className="report-table"><thead><tr><th>Date</th><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Office</th><th>Location</th></tr></thead><tbody>{pagedRows.map((row) => <ReportRowItem key={row.attendance.id} row={row} expanded={expandedRecordId === row.attendance.id} onToggle={() => setExpandedRecordId((current) => current === row.attendance.id ? null : row.attendance.id)} />)}</tbody></table></div>
-        {rows.length > pageSize && <div className="table-pagination"><span>Page {safePage} of {pageCount}</span><div><button type="button" disabled={safePage === 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>Previous</button><button type="button" disabled={safePage === pageCount} onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}>Next</button></div></div>}
+        <PaginationControls page={safePage} pageCount={pageCount} onPage={setCurrentPage} />
       </>}
     </section>
   </div>;
@@ -1743,6 +1743,13 @@ function CorrectionRequestsPanel({
   onExpandedId: (id: string | null) => void;
 }) {
   const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
+  const [needActionPage, setNeedActionPage] = useState(1);
+  const [submittedPage, setSubmittedPage] = useState(1);
+  const pageSize = 6;
+  const needActionPageCount = Math.max(1, Math.ceil(needActionRecords.length / pageSize));
+  const submittedPageCount = Math.max(1, Math.ceil(correctionRequests.length / pageSize));
+  const safeNeedActionPage = Math.min(needActionPage, needActionPageCount);
+  const safeSubmittedPage = Math.min(submittedPage, submittedPageCount);
   return <>
     <div className="requests-filter-bar">
       <div className="filter-chips" role="group" aria-label="Attendance correction type">
@@ -1752,16 +1759,16 @@ function CorrectionRequestsPanel({
     </div>
     {tab === 'need_action' ? (
       needActionRecords.length ? <div className="request-card-list">
-        {needActionRecords.map((record) => <button type="button" key={record.id} className="request-card correction-action-card" onClick={() => setSelectedRecord(record)}>
+        {needActionRecords.slice((safeNeedActionPage - 1) * pageSize, safeNeedActionPage * pageSize).map((record) => <button type="button" key={record.id} className="request-card correction-action-card" onClick={() => setSelectedRecord(record)}>
           <div><span>Affected date</span><strong>{displayDate(record.work_date)}</strong></div>
           <div><span>Correction type</span><strong>{correctionNeedActionLabel(record)}</strong></div>
           <span className={`status ${statusTone(record.status)}`}>{statusLabel[record.status] || record.status}</span>
-          <span className="correction-card-action">Request correction <ArrowIcon size={15} /></span>
+          <span className="correction-card-action">Correct attendance</span>
         </button>)}
       </div> : <EmptyRequests title="No correction action needed" message="Missed or absent attendance records will appear here when they need your attention." />
     ) : (
       correctionRequests.length ? <div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Affected date</th><th>Request</th><th>Submitted</th></tr></thead><tbody>
-        {correctionRequests.map((request) => {
+        {correctionRequests.slice((safeSubmittedPage - 1) * pageSize, safeSubmittedPage * pageSize).map((request) => {
           const rowId = `correction-${request.id}`;
           const isOpen = expandedId === rowId;
           return <Fragment key={request.id}>
@@ -1784,6 +1791,8 @@ function CorrectionRequestsPanel({
         })}
       </tbody></table></div> : <EmptyRequests title="No submitted corrections" message="Submitted correction requests will appear here." />
     )}
+    {tab === 'need_action' && needActionRecords.length > 0 && <PaginationControls page={safeNeedActionPage} pageCount={needActionPageCount} onPage={setNeedActionPage} />}
+    {tab === 'submitted' && correctionRequests.length > 0 && <PaginationControls page={safeSubmittedPage} pageCount={submittedPageCount} onPage={setSubmittedPage} />}
     {selectedRecord && <CorrectionRequestDrawer record={selectedRecord} onClose={() => setSelectedRecord(null)} onSubmit={onSubmitCorrection} />}
   </>;
 }
@@ -1812,7 +1821,7 @@ function CorrectionRequestDrawer({ record, onClose, onSubmit }: { record: Attend
     <div className="detail-drawer-head"><div><p className="eyebrow">ATTENDANCE CORRECTION</p><h2>Request a correction</h2><p>{displayDate(record.work_date)}</p></div><button type="button" className="close-button" aria-label="Close correction form" onClick={onClose}>x</button></div>
     <section className="detail-section"><h3>Current attendance</h3><div className="detail-grid"><DetailPair label="Clock in" value={formatTime(record.clock_in)} /><DetailPair label="Clock out" value={formatTime(record.clock_out)} /><DetailPair label="Issue" value={correctionNeedActionLabel(record)} /><DetailPair label="Status" value={statusLabel[record.status] || record.status} /></div></section>
     <form className="correction-form" onSubmit={submit}><label>What needs correction?<select value={correctionType} onChange={(event) => setCorrectionType(event.target.value as 'clock_in' | 'clock_out' | 'both')}><option value="clock_in">Clock in</option><option value="clock_out">Clock out</option><option value="both">Clock in and clock out</option></select></label>
-      <div className="correction-time-grid">{correctionType !== 'clock_out' && <label>Correct clock-in time<input type="time" value={correctedClockIn} onChange={(event) => setCorrectedClockIn(event.target.value)} required /></label>}{correctionType !== 'clock_in' && <label>Correct clock-out time<input type="time" value={correctedClockOut} onChange={(event) => setCorrectedClockOut(event.target.value)} required /></label>}</div>
+      <div className="correction-time-grid">{correctionType !== 'clock_out' && <label>Correct clock-in time<input type="time" lang="en-GB" step="60" value={correctedClockIn} onChange={(event) => setCorrectedClockIn(event.target.value)} required /></label>}{correctionType !== 'clock_in' && <label>Correct clock-out time<input type="time" lang="en-GB" step="60" value={correctedClockOut} onChange={(event) => setCorrectedClockOut(event.target.value)} required /></label>}</div>
       <label>Reason<textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain what happened and why this correction is needed" required /></label>{error && <p className="decision-error" role="alert">{error}</p>}<div className="decision-actions"><button type="button" className="secondary-button" disabled={saving} onClick={onClose}>Cancel</button><button type="submit" className="approve-button" disabled={saving}>{saving ? 'Submitting...' : 'Submit correction'}</button></div>
     </form>
   </aside></div>;
@@ -1882,8 +1891,16 @@ function LeaveBalancesPanel({ leaveTypes, balances }: { leaveTypes: LeaveType[];
 
 function LeaveRequestTable({ leaveRequests, expandedId, onExpandedId, onCancel, emptyTitle }: { leaveRequests: LeaveRequest[]; expandedId: string | null; onExpandedId: (id: string | null) => void; onCancel: MyRequestsWorkspaceProps['onCancelLeave']; emptyTitle: string }) {
   if (!leaveRequests.length) return <EmptyRequests title={emptyTitle} message="Leave requests will appear here as they move through the approval process." />;
-  return <div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Leave type</th><th>Date range</th><th>Duration</th><th>Submitted</th></tr></thead><tbody>
-    {leaveRequests.map((request) => {
+  return <PaginatedLeaveRequestTable leaveRequests={leaveRequests} expandedId={expandedId} onExpandedId={onExpandedId} onCancel={onCancel} />;
+}
+
+function PaginatedLeaveRequestTable({ leaveRequests, expandedId, onExpandedId, onCancel }: { leaveRequests: LeaveRequest[]; expandedId: string | null; onExpandedId: (id: string | null) => void; onCancel: MyRequestsWorkspaceProps['onCancelLeave'] }) {
+  const [page, setPage] = useState(1);
+  const pageSize = 8;
+  const pageCount = Math.max(1, Math.ceil(leaveRequests.length / pageSize));
+  const safePage = Math.min(page, pageCount);
+  return <><div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Leave type</th><th>Date range</th><th>Duration</th><th>Submitted</th></tr></thead><tbody>
+    {leaveRequests.slice((safePage - 1) * pageSize, safePage * pageSize).map((request) => {
       const rowId = `leave-${request.id}`;
       const isOpen = expandedId === rowId;
       return <Fragment key={request.id}>
@@ -1907,7 +1924,11 @@ function LeaveRequestTable({ leaveRequests, expandedId, onExpandedId, onCancel, 
         </td></tr>}
       </Fragment>;
     })}
-  </tbody></table></div>;
+  </tbody></table></div><PaginationControls page={safePage} pageCount={pageCount} onPage={setPage} /></>;
+}
+
+function PaginationControls({ page, pageCount, onPage }: { page: number; pageCount: number; onPage: (page: number) => void }) {
+  return <div className="table-pagination"><span>Page {page} of {pageCount}</span><div><button type="button" disabled={page === 1} onClick={() => onPage(Math.max(1, page - 1))}>Previous</button><button type="button" disabled={page === pageCount} onClick={() => onPage(Math.min(pageCount, page + 1))}>Next</button></div></div>;
 }
 
 function EmptyRequests({ title, message }: { title: string; message: string }) {
@@ -1987,8 +2008,8 @@ function ApprovalsWorkspace({
         </div>
       </div>
       {loading ? <ApprovalLoadingState /> : error ? <ApprovalErrorState message={error} /> : items.length === 0 ? <ApprovalEmptyState /> : <>
-        <div className="table-wrap"><table className="approval-table"><thead><tr><th>Employee</th><th>Request</th><th>Details</th><th>Department</th><th>Status</th><th>Submitted</th><th></th></tr></thead><tbody>{pagedItems.map((item) => <ApprovalRow key={`${item.kind}-${item.id}`} item={item} onView={() => onSelect(item)} />)}</tbody></table></div>
-        {items.length > pageSize && <div className="table-pagination"><span>Page {safePage} of {pageCount}</span><div><button type="button" disabled={safePage === 1} onClick={() => setCurrentPage((page) => Math.max(1, page - 1))}>Previous</button><button type="button" disabled={safePage === pageCount} onClick={() => setCurrentPage((page) => Math.min(pageCount, page + 1))}>Next</button></div></div>}
+        <div className="table-wrap"><table className="approval-table"><thead><tr><th>Employee</th><th>Request</th><th>Details</th><th>Department</th><th>Status</th><th>Submitted</th></tr></thead><tbody>{pagedItems.map((item) => <ApprovalRow key={`${item.kind}-${item.id}`} item={item} onView={() => onSelect(item)} />)}</tbody></table></div>
+        <PaginationControls page={safePage} pageCount={pageCount} onPage={setCurrentPage} />
       </>}
     </section>
   </div>;
@@ -1998,14 +2019,13 @@ function ApprovalRow({ item, onView }: { item: ApprovalItem; onView: () => void 
   const detail = item.kind === 'leave'
     ? `${leaveTypeLabel(item.leave?.leave_type)} / ${displayDate(item.leave?.start_date || '')}${item.leave?.end_date && item.leave.end_date !== item.leave.start_date ? ` - ${displayDate(item.leave.end_date)}` : ''}`
     : `Affected date: ${displayDate(item.correction?.work_date || '')}`;
-  return <tr>
+  return <tr className="request-row-clickable" tabIndex={0} role="button" aria-label={`View ${requestTypeLabel(item)} for ${item.requester.full_name}`} onClick={onView} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onView(); } }}>
     <td><div className="employee-cell"><span className="table-avatar">{item.requester.full_name.slice(0, 1)}</span><span><strong>{item.requester.full_name}</strong><small>{item.requester.employee_id}</small></span></div></td>
     <td><strong className="request-type">{requestTypeLabel(item)}</strong></td>
     <td className="request-detail">{detail}</td>
     <td>{item.requester.department || 'Unassigned'}</td>
     <td><span className={`status ${requestStatusTone(item.status)}`}>{item.status === 'pending' ? 'Pending review' : item.status === 'approved' ? 'Approved' : 'Rejected'}</span></td>
     <td>{formatDateTime(item.created_at)}</td>
-    <td><button className="row-action" aria-label={`View ${requestTypeLabel(item)} for ${item.requester.full_name}`} onClick={onView}>View <ArrowIcon size={15} /></button></td>
   </tr>;
 }
 

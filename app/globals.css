@@ -115,6 +115,38 @@ button { cursor:pointer; }
   .table-pagination { align-items:flex-start; flex-direction:column; }
 }
 
+/* Shared, high-contrast hover and focus treatment for portal actions. */
+.request-card.correction-action-card:hover span.correction-card-action,
+.request-card.correction-action-card:focus-visible span.correction-card-action { border-color:#14233f; background:#14233f; color:#fff; text-decoration:none; }
+.workspace table tbody > tr:has(button):not(.request-detail-row):hover > td,
+.workspace table tbody > tr.request-row-clickable:hover > td,
+.workspace table tbody > tr:has(button):not(.request-detail-row):focus-within > td { background:#edf3f0; color:inherit; border-top:2px solid #243b5d; border-bottom:2px solid #243b5d; }
+.workspace table tbody > tr:has(button):not(.request-detail-row):hover > td:first-child,
+.workspace table tbody > tr.request-row-clickable:hover > td:first-child,
+.workspace table tbody > tr:has(button):not(.request-detail-row):focus-within > td:first-child { border-left:2px solid #243b5d; }
+.workspace table tbody > tr:has(button):not(.request-detail-row):hover > td:last-child,
+.workspace table tbody > tr.request-row-clickable:hover > td:last-child,
+.workspace table tbody > tr:has(button):not(.request-detail-row):focus-within > td:last-child { border-right:2px solid #243b5d; }
+.workspace table tbody > tr:has(button):not(.request-detail-row):hover :where(strong,small,.request-type,.row-action),
+.workspace table tbody > tr.request-row-clickable:hover :where(strong,small,.request-type,.row-action),
+.workspace table tbody > tr:has(button):not(.request-detail-row):focus-within :where(strong,small,.request-type,.row-action) { color:inherit; }
+.workspace table tbody > tr:has(button):not(.request-detail-row):hover,
+.workspace table tbody > tr.request-row-clickable:hover { box-shadow:0 5px 0 rgba(36,59,93,.13); }
+
+/* Data lists use separated, rounded row cards instead of a boxed grid. */
+.workspace .table-wrap { padding:0 14px 10px; background:#f6f8f6; }
+.workspace .table-wrap table { border-collapse:separate; border-spacing:0 9px; }
+.workspace .table-wrap thead th { border-top:0; border-bottom:1px solid #d8e0dc; background:transparent; }
+.workspace .table-wrap tbody > tr:not(.request-detail-row) > td { background:#fff; border-top:1px solid #dce4df; border-bottom:1px solid #dce4df; }
+.workspace .table-wrap tbody > tr:not(.request-detail-row) > td:first-child { border-left:1px solid #dce4df; border-radius:11px 0 0 11px; }
+.workspace .table-wrap tbody > tr:not(.request-detail-row) > td:last-child { border-right:1px solid #dce4df; border-radius:0 11px 11px 0; }
+.workspace .table-wrap tbody > tr.request-detail-row > td { border:1px solid #dce4df; border-radius:11px; }
+.workspace .table-wrap tbody > tr:has(button):not(.request-detail-row):hover > td:first-child,
+.workspace .table-wrap tbody > tr.request-row-clickable:hover > td:first-child { border-left-width:2px; border-radius:11px 0 0 11px; }
+.workspace .table-wrap tbody > tr:has(button):not(.request-detail-row):hover > td:last-child,
+.workspace .table-wrap tbody > tr.request-row-clickable:hover > td:last-child { border-right-width:2px; border-radius:0 11px 11px 0; }
+.workspace .table-wrap tbody > tr.request-row-clickable:focus-visible { outline:3px solid #1f5fae; outline-offset:-1px; border-radius:11px; }
+
 /* Approval inbox and review drawer. */
 .approvals-toolbar { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:26px 28px; border:1px solid #dce1df; border-radius:17px; background:#eff2f1; }
 .approvals-toolbar h2 { margin:7px 0 5px; font-size:26px; letter-spacing:-.8px; }
@@ -339,11 +371,11 @@ button { cursor:pointer; }
 .filter-chip:not(.active) span { background:#edf0f4; color:var(--ink-soft); }
 .request-card-list { padding:18px 25px; display:grid; gap:12px; }
 .request-card { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto; align-items:center; gap:16px; border:1px solid #dfe7e2; border-radius:13px; background:#fff; padding:16px; }
-.correction-action-card { width:100%; grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto auto; color:inherit; text-align:left; }.correction-action-card:hover { border-color:#a9d3b6; background:#f8fcf9; box-shadow:0 4px 14px rgba(19,37,65,.06); }.request-card .correction-card-action { display:flex; align-items:center; gap:5px; color:var(--green-deep); font-size:11px; font-weight:900; white-space:nowrap; }
+.correction-action-card { width:100%; grid-template-columns:minmax(240px,1.15fr) minmax(270px,1.15fr) 150px 160px; color:inherit; text-align:left; transition:transform .16s ease,box-shadow .16s ease,border-color .16s ease,background .16s ease; }.correction-action-card>div,.correction-action-card>.status { align-self:center; justify-self:start; text-align:left; }.correction-action-card>.correction-card-action { align-self:center; justify-self:start; text-align:center; }.correction-action-card:hover { transform:translateY(-2px); border:2px solid #243b5d; background:#edf3f0; box-shadow:0 8px 0 rgba(36,59,93,.13); }.correction-action-card:focus-visible { outline:3px solid #1f5fae; outline-offset:3px; border-color:#14233f; }.request-card.correction-action-card span.correction-card-action { display:flex!important; align-items:center!important; justify-content:center!important; height:38px; min-height:38px; border:2px solid var(--green-deep); border-radius:8px; background:#fff; color:var(--green-deep); padding:2px 12px 0; font-size:11px; font-weight:900; line-height:normal; white-space:nowrap; text-align:center; text-decoration:none; }.correction-action-card:hover .correction-card-action,.correction-action-card:focus-visible .correction-card-action { border-color:#14233f; background:#14233f; color:#fff; text-decoration:none; }
 .request-card span:not(.status) { display:block; color:var(--ink-soft); font-size:12px; font-weight:800; }
 .request-card strong { color:var(--ink); font-size:14px; }
 .request-table { min-width:860px; }
-.request-table .request-row-clickable { cursor:pointer; }
+.request-row-clickable { cursor:pointer; }
 .request-table .request-row-clickable:hover { background:#f8fbf9; }
 .request-detail-row td { padding:0 18px 18px; background:#fbfdfb; white-space:normal; }
 .request-inline-detail { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:11px; padding:14px; border:1px solid #dfe7e2; border-radius:12px; background:#f8fbf9; }
