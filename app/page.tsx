@@ -802,6 +802,25 @@ export default function PortalPage() {
     return true;
   }
 
+  async function handleSubmitCorrection(input: { record: AttendanceRecord; correctionType: 'clock_in' | 'clock_out' | 'both'; correctedClockIn: string; correctedClockOut: string; reason: string }) {
+    if (!supabase || !session?.user) return { ok: false, message: 'Supabase is not configured.' };
+    const toTimestamp = (time: string) => time ? new Date(`${input.record.work_date}T${time}:00`).toISOString() : null;
+    const payload = {
+      user_id: session.user.id,
+      attendance_record_id: input.record.id,
+      work_date: input.record.work_date,
+      correction_type: input.correctionType,
+      corrected_clock_in: input.correctionType !== 'clock_out' ? toTimestamp(input.correctedClockIn) : null,
+      corrected_clock_out: input.correctionType !== 'clock_in' ? toTimestamp(input.correctedClockOut) : null,
+      reason: input.reason.trim(),
+      status: 'pending',
+    };
+    const { error: submitError } = await supabase.from('correction_requests').insert(payload);
+    if (submitError) return { ok: false, message: submitError.message };
+    await Promise.all([loadMyRequestsData(), loadPortalData()]);
+    return { ok: true, message: 'Correction request submitted for approval.' };
+  }
+
   async function loadApprovalData() {
     if (!supabase || !session?.user) return;
     setApprovalLoading(true);
@@ -1194,6 +1213,7 @@ export default function PortalPage() {
             error={myRequestsError}
             onSubmitLeave={handleSubmitLeave}
             onCancelLeave={handleCancelLeave}
+            onSubmitCorrection={handleSubmitCorrection}
             section={requestSection}
           />
         ) : activeView === 'approvals' ? (
@@ -1663,10 +1683,11 @@ type MyRequestsWorkspaceProps = {
   error: string | null;
   onSubmitLeave: (input: { leaveTypeId: string; startDate: string; endDate: string; reason: string }) => Promise<{ ok: boolean; message: string }>;
   onCancelLeave: (requestId: string, reason: string) => Promise<boolean>;
+  onSubmitCorrection: (input: { record: AttendanceRecord; correctionType: 'clock_in' | 'clock_out' | 'both'; correctedClockIn: string; correctedClockOut: string; reason: string }) => Promise<{ ok: boolean; message: string }>;
   section: 'corrections' | 'leave';
 };
 
-function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveRequests, leaveTypes, leaveBalances, loading, error, onSubmitLeave, onCancelLeave, section }: MyRequestsWorkspaceProps) {
+function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveRequests, leaveTypes, leaveBalances, loading, error, onSubmitLeave, onCancelLeave, onSubmitCorrection, section }: MyRequestsWorkspaceProps) {
   const [correctionTab, setCorrectionTab] = useState<'need_action' | 'submitted'>('need_action');
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -1691,6 +1712,7 @@ function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveReque
               onTab={setCorrectionTab}
               needActionRecords={needActionRecords}
               correctionRequests={correctionRequests}
+              onSubmitCorrection={onSubmitCorrection}
               expandedId={expandedId}
               onExpandedId={setExpandedId}
             />
@@ -1708,6 +1730,7 @@ function CorrectionRequestsPanel({
   onTab,
   needActionRecords,
   correctionRequests,
+  onSubmitCorrection,
   expandedId,
   onExpandedId,
 }: {
@@ -1715,9 +1738,11 @@ function CorrectionRequestsPanel({
   onTab: (tab: 'need_action' | 'submitted') => void;
   needActionRecords: AttendanceRecord[];
   correctionRequests: CorrectionRequest[];
+  onSubmitCorrection: MyRequestsWorkspaceProps['onSubmitCorrection'];
   expandedId: string | null;
   onExpandedId: (id: string | null) => void;
 }) {
+  const [selectedRecord, setSelectedRecord] = useState<AttendanceRecord | null>(null);
   return <>
     <div className="requests-filter-bar">
       <div className="filter-chips" role="group" aria-label="Attendance correction type">
@@ -1727,11 +1752,12 @@ function CorrectionRequestsPanel({
     </div>
     {tab === 'need_action' ? (
       needActionRecords.length ? <div className="request-card-list">
-        {needActionRecords.map((record) => <article key={record.id} className="request-card">
+        {needActionRecords.map((record) => <button type="button" key={record.id} className="request-card correction-action-card" onClick={() => setSelectedRecord(record)}>
           <div><span>Affected date</span><strong>{displayDate(record.work_date)}</strong></div>
           <div><span>Correction type</span><strong>{correctionNeedActionLabel(record)}</strong></div>
           <span className={`status ${statusTone(record.status)}`}>{statusLabel[record.status] || record.status}</span>
-        </article>)}
+          <span className="correction-card-action">Request correction <ArrowIcon size={15} /></span>
+        </button>)}
       </div> : <EmptyRequests title="No correction action needed" message="Missed or absent attendance records will appear here when they need your attention." />
     ) : (
       correctionRequests.length ? <div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Affected date</th><th>Request</th><th>Submitted</th></tr></thead><tbody>
@@ -1758,7 +1784,38 @@ function CorrectionRequestsPanel({
         })}
       </tbody></table></div> : <EmptyRequests title="No submitted corrections" message="Submitted correction requests will appear here." />
     )}
+    {selectedRecord && <CorrectionRequestDrawer record={selectedRecord} onClose={() => setSelectedRecord(null)} onSubmit={onSubmitCorrection} />}
   </>;
+}
+
+function CorrectionRequestDrawer({ record, onClose, onSubmit }: { record: AttendanceRecord; onClose: () => void; onSubmit: MyRequestsWorkspaceProps['onSubmitCorrection'] }) {
+  const defaultType: 'clock_in' | 'clock_out' | 'both' = !record.clock_in && !record.clock_out ? 'both' : !record.clock_in ? 'clock_in' : 'clock_out';
+  const [correctionType, setCorrectionType] = useState<'clock_in' | 'clock_out' | 'both'>(defaultType);
+  const [correctedClockIn, setCorrectedClockIn] = useState(record.clock_in ? new Date(record.clock_in).toTimeString().slice(0, 5) : '08:00');
+  const [correctedClockOut, setCorrectedClockOut] = useState(record.clock_out ? new Date(record.clock_out).toTimeString().slice(0, 5) : '17:00');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setError(null);
+    if ((correctionType === 'clock_in' || correctionType === 'both') && !correctedClockIn) return setError('Enter the corrected clock-in time.');
+    if ((correctionType === 'clock_out' || correctionType === 'both') && !correctedClockOut) return setError('Enter the corrected clock-out time.');
+    if (correctionType === 'both' && correctedClockOut <= correctedClockIn) return setError('Clock-out time must be after clock-in time.');
+    if (!reason.trim()) return setError('Explain why the attendance record needs correction.');
+    setSaving(true);
+    const result = await onSubmit({ record, correctionType, correctedClockIn, correctedClockOut, reason });
+    setSaving(false);
+    if (!result.ok) return setError(result.message);
+    onClose();
+  }
+  return <div className="detail-backdrop" role="presentation" onMouseDown={onClose}><aside className="detail-drawer correction-drawer" role="dialog" aria-modal="true" aria-label="Request attendance correction" onMouseDown={(event) => event.stopPropagation()}>
+    <div className="detail-drawer-head"><div><p className="eyebrow">ATTENDANCE CORRECTION</p><h2>Request a correction</h2><p>{displayDate(record.work_date)}</p></div><button type="button" className="close-button" aria-label="Close correction form" onClick={onClose}>x</button></div>
+    <section className="detail-section"><h3>Current attendance</h3><div className="detail-grid"><DetailPair label="Clock in" value={formatTime(record.clock_in)} /><DetailPair label="Clock out" value={formatTime(record.clock_out)} /><DetailPair label="Issue" value={correctionNeedActionLabel(record)} /><DetailPair label="Status" value={statusLabel[record.status] || record.status} /></div></section>
+    <form className="correction-form" onSubmit={submit}><label>What needs correction?<select value={correctionType} onChange={(event) => setCorrectionType(event.target.value as 'clock_in' | 'clock_out' | 'both')}><option value="clock_in">Clock in</option><option value="clock_out">Clock out</option><option value="both">Clock in and clock out</option></select></label>
+      <div className="correction-time-grid">{correctionType !== 'clock_out' && <label>Correct clock-in time<input type="time" value={correctedClockIn} onChange={(event) => setCorrectedClockIn(event.target.value)} required /></label>}{correctionType !== 'clock_in' && <label>Correct clock-out time<input type="time" value={correctedClockOut} onChange={(event) => setCorrectedClockOut(event.target.value)} required /></label>}</div>
+      <label>Reason<textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain what happened and why this correction is needed" required /></label>{error && <p className="decision-error" role="alert">{error}</p>}<div className="decision-actions"><button type="button" className="secondary-button" disabled={saving} onClick={onClose}>Cancel</button><button type="submit" className="approve-button" disabled={saving}>{saving ? 'Submitting...' : 'Submit correction'}</button></div>
+    </form>
+  </aside></div>;
 }
 
 function LeaveRequestsPanel({ leaveRequests, leaveTypes, leaveBalances, expandedId, onExpandedId, onSubmit, onCancel }: { leaveRequests: LeaveRequest[]; leaveTypes: LeaveType[]; leaveBalances: LeaveBalance[]; expandedId: string | null; onExpandedId: (id: string | null) => void; onSubmit: MyRequestsWorkspaceProps['onSubmitLeave']; onCancel: MyRequestsWorkspaceProps['onCancelLeave'] }) {
