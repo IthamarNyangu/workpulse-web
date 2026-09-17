@@ -14,7 +14,7 @@ import {
   SettingsIcon,
 } from '../components/icons';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { ApprovalItem, AttendanceRecord, CorrectionRequest, LeaveRequest, Profile, TeamRow, WorkPulseRole } from '../lib/types';
+import type { ApprovalItem, AttendanceRecord, CorrectionRequest, LeaveBalance, LeaveRequest, LeaveRequestEvent, LeaveType, Profile, TeamRow, WorkPulseRole } from '../lib/types';
 
 type Office = {
   id: string;
@@ -199,6 +199,26 @@ function leaveTypeLabel(type?: string) {
   return type === 'annual' ? 'Annual leave' : type === 'sick' ? 'Sick leave' : 'Other leave';
 }
 
+function leaveStageLabel(stage?: string, status?: string) {
+  if (stage === 'supervisor_pending') return 'Awaiting supervisor';
+  if (stage === 'hr_pending') return 'Awaiting HR';
+  if (stage === 'cancelled') return 'Cancelled';
+  return requestStatusLabel(stage || status);
+}
+
+function workingDays(start: string, end: string) {
+  if (!start || !end || end < start) return 0;
+  let count = 0;
+  const cursor = new Date(`${start}T12:00:00`);
+  const finish = new Date(`${end}T12:00:00`);
+  while (cursor <= finish) {
+    const day = cursor.getDay();
+    if (day !== 0 && day !== 6) count += 1;
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return count;
+}
+
 function requestStatusLabel(status?: string | null) {
   return status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Pending approval';
 }
@@ -358,6 +378,8 @@ export default function PortalPage() {
   const [team, setTeam] = useState<TeamRow[]>([]);
   const [selectedDate, setSelectedDate] = useState(dateKey());
   const [activeView, setActiveView] = useState<PortalView>('attendance');
+  const [requestSection, setRequestSection] = useState<'corrections' | 'leave'>('corrections');
+  const [requestsNavExpanded, setRequestsNavExpanded] = useState(false);
   const [attendanceScope, setAttendanceScope] = useState<AttendanceScope>('team');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
@@ -378,6 +400,8 @@ export default function PortalPage() {
   const [approvalSearch, setApprovalSearch] = useState('');
   const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
   const [myLeaveRequests, setMyLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [leaveTypes, setLeaveTypes] = useState<LeaveType[]>([]);
+  const [leaveBalances, setLeaveBalances] = useState<LeaveBalance[]>([]);
   const [myCorrectionRequests, setMyCorrectionRequests] = useState<CorrectionRequest[]>([]);
   const [myNeedActionRecords, setMyNeedActionRecords] = useState<AttendanceRecord[]>([]);
   const [myRequestsLoading, setMyRequestsLoading] = useState(false);
@@ -413,6 +437,8 @@ export default function PortalPage() {
         setApprovalItems([]);
         setSelectedApproval(null);
         setMyLeaveRequests([]);
+        setLeaveTypes([]);
+        setLeaveBalances([]);
         setMyCorrectionRequests([]);
         setMyNeedActionRecords([]);
         setMyRequestsError(null);
@@ -687,10 +713,10 @@ export default function PortalPage() {
     setMyRequestsLoading(true);
     setMyRequestsError(null);
     try {
-      const [leaveResponse, correctionResponse, attentionResponse] = await Promise.all([
+      const [leaveResponse, correctionResponse, attentionResponse, typesResponse, balancesResponse] = await Promise.all([
         supabase
           .from('leave_requests')
-          .select('id, user_id, leave_type, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, created_at, updated_at')
+          .select('id, user_id, leave_type, leave_type_id, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, workflow_stage, supervisor_id, supervisor_reviewed_at, supervisor_note, hr_approver_id, hr_reviewed_at, hr_note, cancelled_at, cancellation_reason, balance_year, reserved_days, created_at, updated_at')
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -705,10 +731,14 @@ export default function PortalPage() {
           .in('status', ['absent', 'missed_punch'])
           .order('work_date', { ascending: false })
           .limit(90),
+        supabase.from('leave_types').select('id, code, name, description, legacy_value, default_entitlement_days, requires_reason, is_paid, is_active').eq('is_active', true).order('sort_order'),
+        supabase.from('leave_balances').select('id, user_id, leave_type_id, leave_year, entitlement_days, carried_forward_days, reserved_days, consumed_days').eq('user_id', session.user.id).eq('leave_year', new Date().getFullYear()),
       ]);
       if (leaveResponse.error) throw leaveResponse.error;
       if (correctionResponse.error) throw correctionResponse.error;
       if (attentionResponse.error) throw attentionResponse.error;
+      if (typesResponse.error) throw typesResponse.error;
+      if (balancesResponse.error) throw balancesResponse.error;
 
       const corrections = (correctionResponse.data || []) as unknown as CorrectionRequest[];
       const pendingCorrectionKeys = new Set(
@@ -719,7 +749,22 @@ export default function PortalPage() {
       const needAction = ((attentionResponse.data || []) as unknown as AttendanceRecord[])
         .filter((record) => !pendingCorrectionKeys.has(record.id) && !pendingCorrectionKeys.has(record.work_date));
 
-      setMyLeaveRequests((leaveResponse.data || []) as unknown as LeaveRequest[]);
+      const leaves = (leaveResponse.data || []) as unknown as LeaveRequest[];
+      const leaveIds = leaves.map((request) => request.id);
+      const actorIds = [...new Set(leaves.flatMap((request) => [request.supervisor_id, request.hr_approver_id]).filter((id): id is string => Boolean(id)))];
+      const [eventsResponse, actorsResponse] = await Promise.all([
+        leaveIds.length ? supabase.from('leave_request_events').select('id, leave_request_id, actor_id, event_type, from_stage, to_stage, note, created_at').in('leave_request_id', leaveIds).order('created_at') : Promise.resolve({ data: [], error: null }),
+        actorIds.length ? supabase.from('profiles').select('id, full_name').in('id', actorIds) : Promise.resolve({ data: [], error: null }),
+      ]);
+      if (eventsResponse.error) throw eventsResponse.error;
+      if (actorsResponse.error) throw actorsResponse.error;
+      const events = (eventsResponse.data || []) as LeaveRequestEvent[];
+      const actors = new Map((actorsResponse.data || []).map((actor) => [actor.id, actor]));
+      const types = (typesResponse.data || []) as LeaveType[];
+      const typesById = new Map(types.map((type) => [type.id, type]));
+      setMyLeaveRequests(leaves.map((request) => ({ ...request, leave_type_record: request.leave_type_id ? typesById.get(request.leave_type_id) : undefined, supervisor: request.supervisor_id ? actors.get(request.supervisor_id) || null : null, hr_approver: request.hr_approver_id ? actors.get(request.hr_approver_id) || null : null, events: events.filter((event) => event.leave_request_id === request.id) })));
+      setLeaveTypes(types);
+      setLeaveBalances((balancesResponse.data || []) as LeaveBalance[]);
       setMyCorrectionRequests(corrections);
       setMyNeedActionRecords(needAction);
     } catch (caught) {
@@ -729,26 +774,45 @@ export default function PortalPage() {
     }
   }
 
+  async function handleSubmitLeave(input: { leaveTypeId: string; startDate: string; endDate: string; reason: string }) {
+    if (!supabase) return { ok: false, message: 'Supabase is not configured.' };
+    const { error: submitError } = await supabase.rpc('submit_leave_request', { p_leave_type_id: input.leaveTypeId, p_start_date: input.startDate, p_end_date: input.endDate, p_reason: input.reason.trim() || null });
+    if (submitError) return { ok: false, message: submitError.message };
+    await loadMyRequestsData();
+    return { ok: true, message: 'Leave request submitted to your supervisor.' };
+  }
+
+  async function handleCancelLeave(requestId: string, reason: string) {
+    if (!supabase) return false;
+    const { error: cancelError } = await supabase.rpc('cancel_leave_request', { p_request_id: requestId, p_reason: reason.trim() || null });
+    if (cancelError) { setMyRequestsError(cancelError.message); return false; }
+    await loadMyRequestsData();
+    return true;
+  }
+
   async function loadApprovalData() {
     if (!supabase || !session?.user) return;
     setApprovalLoading(true);
     setApprovalError(null);
     try {
-      const [leaveResponse, correctionResponse] = await Promise.all([
+      const [leaveResponse, correctionResponse, hrApproverResponse] = await Promise.all([
         supabase
           .from('leave_requests')
-          .select('id, user_id, leave_type, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, created_at, updated_at')
+          .select('id, user_id, leave_type, leave_type_id, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, workflow_stage, supervisor_id, supervisor_reviewed_at, supervisor_note, hr_approver_id, hr_reviewed_at, hr_note, cancelled_at, cancellation_reason, balance_year, reserved_days, created_at, updated_at')
           .order('created_at', { ascending: false }),
         supabase
           .from('correction_requests')
           .select('id, user_id, attendance_record_id, work_date, correction_type, corrected_clock_in, corrected_clock_out, reason, status, reviewed_by, reviewed_at, reviewer_note, created_at, updated_at')
           .order('created_at', { ascending: false }),
+        supabase.rpc('is_leave_hr_approver'),
       ]);
       if (leaveResponse.error) throw leaveResponse.error;
       if (correctionResponse.error) throw correctionResponse.error;
+      if (hrApproverResponse.error) throw hrApproverResponse.error;
 
       const leaves = ((leaveResponse.data || []) as unknown as LeaveRequest[])
-        .filter((request) => request.user_id !== session.user.id);
+        .filter((request) => request.user_id !== session.user.id)
+        .filter((request) => request.supervisor_id === session.user.id || (Boolean(hrApproverResponse.data) && request.workflow_stage === 'hr_pending') || request.hr_approver_id === session.user.id);
       const corrections = ((correctionResponse.data || []) as unknown as CorrectionRequest[])
         .filter((request) => request.user_id !== session.user.id);
       const requesterIds = [...new Set([...leaves, ...corrections].map((request) => request.user_id))];
@@ -849,7 +913,7 @@ export default function PortalPage() {
         reviewer_note: reviewerNote.trim() || null,
       };
       if (item.kind === 'leave') {
-        const { error: updateError } = await supabase.from('leave_requests').update(reviewPayload).eq('id', item.id).eq('status', 'pending');
+        const { error: updateError } = await supabase.rpc('review_leave_request', { p_request_id: item.id, p_decision: decision, p_note: reviewerNote.trim() || null });
         if (updateError) throw updateError;
       } else {
         const correction = item.correction;
@@ -1056,7 +1120,11 @@ export default function PortalPage() {
         <div className="workspace-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Portal navigation">
           <NavItem active={activeView === 'attendance'} icon={<GridIcon />} label="Attendance" onClick={() => setActiveView('attendance')} />
-          <NavItem active={activeView === 'requests'} icon={<ClipboardIcon />} label="My Requests" onClick={() => setActiveView('requests')} />
+          <NavItem active={activeView === 'requests'} icon={<ClipboardIcon />} label="My Requests" onClick={() => { setRequestsNavExpanded((expanded) => !expanded); if (!requestsNavExpanded) setActiveView('requests'); }} />
+          <div className={`request-subnav ${requestsNavExpanded ? 'open' : ''}`}>
+            <button type="button" className={requestSection === 'corrections' && activeView === 'requests' ? 'active' : ''} onClick={() => { setRequestSection('corrections'); setActiveView('requests'); }}><span>Attendance Corrections</span></button>
+            <button type="button" className={requestSection === 'leave' && activeView === 'requests' ? 'active' : ''} onClick={() => { setRequestSection('leave'); setActiveView('requests'); }}><span>Leave Requests</span></button>
+          </div>
           {canReview && <NavItem active={activeView === 'approvals'} icon={<ClipboardIcon />} label="Approvals" onClick={() => setActiveView('approvals')} />}
           <NavItem active={activeView === 'reports'} icon={<ChartIcon />} label="Reports" onClick={() => setActiveView('reports')} />
           {canManageOrganisation && <NavItem active={activeView === 'organisation'} icon={<SettingsIcon />} label="Organisation" onClick={() => setActiveView('organisation')} />}
@@ -1097,8 +1165,13 @@ export default function PortalPage() {
             needActionRecords={myNeedActionRecords}
             correctionRequests={myCorrectionRequests}
             leaveRequests={myLeaveRequests}
+            leaveTypes={leaveTypes}
+            leaveBalances={leaveBalances}
             loading={myRequestsLoading}
             error={myRequestsError}
+            onSubmitLeave={handleSubmitLeave}
+            onCancelLeave={handleCancelLeave}
+            section={requestSection}
           />
         ) : activeView === 'approvals' ? (
           <ApprovalsWorkspace
@@ -1561,39 +1634,32 @@ type MyRequestsWorkspaceProps = {
   needActionRecords: AttendanceRecord[];
   correctionRequests: CorrectionRequest[];
   leaveRequests: LeaveRequest[];
+  leaveTypes: LeaveType[];
+  leaveBalances: LeaveBalance[];
   loading: boolean;
   error: string | null;
+  onSubmitLeave: (input: { leaveTypeId: string; startDate: string; endDate: string; reason: string }) => Promise<{ ok: boolean; message: string }>;
+  onCancelLeave: (requestId: string, reason: string) => Promise<boolean>;
+  section: 'corrections' | 'leave';
 };
 
-function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveRequests, loading, error }: MyRequestsWorkspaceProps) {
-  const [section, setSection] = useState<'corrections' | 'leave'>('corrections');
+function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveRequests, leaveTypes, leaveBalances, loading, error, onSubmitLeave, onCancelLeave, section }: MyRequestsWorkspaceProps) {
   const [correctionTab, setCorrectionTab] = useState<'need_action' | 'submitted'>('need_action');
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const pendingCount = correctionRequests.filter((request) => request.status === 'pending').length
-    + leaveRequests.filter((request) => request.status === 'pending').length;
-  const reviewedCount = correctionRequests.filter((request) => request.status !== 'pending').length
-    + leaveRequests.filter((request) => request.status !== 'pending').length;
 
   return <div className="requests-workspace">
     <section className="my-requests-toolbar">
       <div>
         <p className="eyebrow">MY REQUESTS</p>
-        <h2>Request centre</h2>
-        <p>Track attendance corrections and leave requests submitted from WorkPulse.</p>
+        <h2>{section === 'corrections' ? 'Attendance Corrections' : 'Leave Requests'}</h2>
+        <p>{section === 'corrections' ? 'Review attendance issues and track submitted corrections.' : 'Apply for leave and follow each request through approval.'}</p>
       </div>
       <div className="request-summary-grid">
-        <RequestStat label="Need action" value={needActionRecords.length} tone="amber" />
-        <RequestStat label="Pending" value={pendingCount} tone="blue" />
-        <RequestStat label="Reviewed" value={reviewedCount} tone="green" />
+        {section === 'corrections' ? <><RequestStat label="Need action" value={needActionRecords.length} tone="amber" /><RequestStat label="Pending" value={correctionRequests.filter((request) => request.status === 'pending').length} tone="blue" /><RequestStat label="Reviewed" value={correctionRequests.filter((request) => request.status !== 'pending').length} tone="green" /></> : <><RequestStat label="Active" value={leaveRequests.filter((request) => request.status === 'pending').length} tone="blue" /><RequestStat label="Approved" value={leaveRequests.filter((request) => request.status === 'approved').length} tone="green" /><RequestStat label="History" value={leaveRequests.filter((request) => request.status !== 'pending').length} tone="amber" /></>}
       </div>
     </section>
 
     <section className="register-panel my-requests-panel">
-      <div className="requests-section-tabs">
-        <button type="button" className={section === 'corrections' ? 'active' : ''} onClick={() => { setSection('corrections'); setExpandedId(null); }}>Attendance Corrections</button>
-        <button type="button" className={section === 'leave' ? 'active' : ''} onClick={() => { setSection('leave'); setExpandedId(null); }}>Leave Requests</button>
-      </div>
-
       {loading ? <div className="state"><div className="loader" /><strong>Loading your requests</strong><span>Checking WorkPulse records linked to your account.</span></div>
         : error ? <div className="state error"><strong>{error}</strong></div>
           : section === 'corrections'
@@ -1605,7 +1671,7 @@ function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveReque
               expandedId={expandedId}
               onExpandedId={setExpandedId}
             />
-            : <LeaveRequestsPanel leaveRequests={leaveRequests} expandedId={expandedId} onExpandedId={setExpandedId} />}
+            : <LeaveRequestsPanel leaveRequests={leaveRequests} leaveTypes={leaveTypes} leaveBalances={leaveBalances} expandedId={expandedId} onExpandedId={setExpandedId} onSubmit={onSubmitLeave} onCancel={onCancelLeave} />}
     </section>
   </div>;
 }
@@ -1672,16 +1738,78 @@ function CorrectionRequestsPanel({
   </>;
 }
 
-function LeaveRequestsPanel({ leaveRequests, expandedId, onExpandedId }: { leaveRequests: LeaveRequest[]; expandedId: string | null; onExpandedId: (id: string | null) => void }) {
-  if (!leaveRequests.length) return <EmptyRequests title="No leave requests yet" message="Submitted leave requests will appear here." />;
+function LeaveRequestsPanel({ leaveRequests, leaveTypes, leaveBalances, expandedId, onExpandedId, onSubmit, onCancel }: { leaveRequests: LeaveRequest[]; leaveTypes: LeaveType[]; leaveBalances: LeaveBalance[]; expandedId: string | null; onExpandedId: (id: string | null) => void; onSubmit: MyRequestsWorkspaceProps['onSubmitLeave']; onCancel: MyRequestsWorkspaceProps['onCancelLeave'] }) {
+  const [tab, setTab] = useState<'apply' | 'active' | 'history' | 'balances'>('active');
+  const active = leaveRequests.filter((request) => ['supervisor_pending', 'hr_pending'].includes(request.workflow_stage || '') || (!request.workflow_stage && request.status === 'pending'));
+  const history = leaveRequests.filter((request) => !active.includes(request));
+  const primaryType = leaveTypes[0];
+  const primaryBalance = leaveBalances.find((item) => item.leave_type_id === primaryType?.id);
+  const availableBalance = primaryType ? Number(primaryBalance?.entitlement_days ?? primaryType.default_entitlement_days) + Number(primaryBalance?.carried_forward_days || 0) - Number(primaryBalance?.reserved_days || 0) - Number(primaryBalance?.consumed_days || 0) : 0;
+  return <>
+    <div className="requests-filter-bar"><div className="filter-chips" role="group" aria-label="Leave requests section">
+      <button type="button" className={`leave-apply-tab ${tab === 'apply' ? 'active' : ''}`} onClick={() => setTab('apply')}><span aria-hidden="true">+</span>Apply for Leave</button>
+      <button type="button" className={`filter-chip ${tab === 'active' ? 'active' : ''}`} onClick={() => setTab('active')}>Active <span>{active.length}</span></button>
+      <button type="button" className={`filter-chip ${tab === 'history' ? 'active' : ''}`} onClick={() => setTab('history')}>History <span>{history.length}</span></button>
+      <button type="button" className={`filter-chip ${tab === 'balances' ? 'active' : ''}`} onClick={() => setTab('balances')}>Leave Balance <span>{availableBalance}</span></button>
+    </div></div>
+    {tab === 'apply' ? <LeaveApplicationForm leaveTypes={leaveTypes} balances={leaveBalances} onSubmit={async (input) => { const result = await onSubmit(input); if (result.ok) setTab('active'); return result; }} />
+      : tab === 'balances' ? <LeaveBalancesPanel leaveTypes={leaveTypes} balances={leaveBalances} />
+        : <LeaveRequestTable leaveRequests={tab === 'active' ? active : history} expandedId={expandedId} onExpandedId={onExpandedId} onCancel={onCancel} emptyTitle={tab === 'active' ? 'No active leave requests' : 'No leave history yet'} />}
+  </>;
+}
+
+function LeaveApplicationForm({ leaveTypes, balances, onSubmit }: { leaveTypes: LeaveType[]; balances: LeaveBalance[]; onSubmit: MyRequestsWorkspaceProps['onSubmitLeave'] }) {
+  const [leaveTypeId, setLeaveTypeId] = useState(leaveTypes[0]?.id || '');
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [validatedDays, setValidatedDays] = useState<number | null>(null);
+  const selectedType = leaveTypes.find((type) => type.id === leaveTypeId);
+  const balance = balances.find((item) => item.leave_type_id === leaveTypeId);
+  const available = balance ? Number(balance.entitlement_days) + Number(balance.carried_forward_days) - Number(balance.consumed_days) - Number(balance.reserved_days) : Number(selectedType?.default_entitlement_days || 0);
+  const days = validatedDays ?? workingDays(startDate, endDate);
+  useEffect(() => {
+    setValidatedDays(null);
+    if (!supabase || !startDate || !endDate || endDate < startDate) return;
+    let current = true;
+    void supabase.rpc('leave_working_days', { p_start: startDate, p_end: endDate }).then(({ data }) => {
+      if (current && typeof data === 'number') setValidatedDays(data);
+    });
+    return () => { current = false; };
+  }, [startDate, endDate]);
+  async function submit(event: FormEvent) {
+    event.preventDefault(); setMessage(null);
+    if (!leaveTypeId || !startDate || !endDate || endDate < startDate) return setMessage({ ok: false, text: 'Choose a valid leave type and date range.' });
+    if (new Date(startDate).getFullYear() !== new Date(endDate).getFullYear()) return setMessage({ ok: false, text: 'A request cannot span leave years.' });
+    if (days <= 0) return setMessage({ ok: false, text: 'The selected range has no working days.' });
+    if (days > available) return setMessage({ ok: false, text: `Insufficient balance. ${available} day${available === 1 ? '' : 's'} available.` });
+    if (selectedType?.requires_reason && !reason.trim()) return setMessage({ ok: false, text: 'A reason is required for this leave type.' });
+    setSaving(true); const result = await onSubmit({ leaveTypeId, startDate, endDate, reason }); setSaving(false); setMessage({ ok: result.ok, text: result.message });
+    if (result.ok) { setStartDate(''); setEndDate(''); setReason(''); }
+  }
+  return <form className="leave-application" onSubmit={submit}>
+    <div className="leave-form-head"><div><p className="eyebrow">NEW REQUEST</p><h3>Apply for leave</h3></div>{leaveTypeId && <div className="leave-calculation"><div><span>Available balance</span><strong>{available} days</strong></div><div><span>Requested</span><strong>{days} days</strong></div><div><span>Balance if approved</span><strong>{Math.max(0, available - days)} days</strong></div></div>}</div>
+    <div className="leave-form-grid"><label>Leave type<select value={leaveTypeId} onChange={(event) => setLeaveTypeId(event.target.value)} required><option value="">Select leave type</option>{leaveTypes.map((type) => <option key={type.id} value={type.id}>{type.name}</option>)}</select></label><label>Start date<input type="date" min={dateKey()} value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></label><label>End date<input type="date" min={startDate || dateKey()} value={endDate} onChange={(event) => setEndDate(event.target.value)} required /></label><label className="reason-field">Reason<textarea value={reason} onChange={(event) => setReason(event.target.value)} placeholder="Explain the reason for your request" /></label></div>
+    <div className="leave-form-actions"><button className="approve-button" disabled={saving || !leaveTypes.length}>{saving ? 'Submitting...' : 'Submit request'}</button></div>{message && <p className={`form-message ${message.ok ? 'success' : 'error'}`} role="status">{message.text}</p>}
+  </form>;
+}
+
+function LeaveBalancesPanel({ leaveTypes, balances }: { leaveTypes: LeaveType[]; balances: LeaveBalance[] }) {
+  return <div className="leave-balance-grid">{leaveTypes.map((type) => { const balance = balances.find((item) => item.leave_type_id === type.id); const entitlement = Number(balance?.entitlement_days ?? type.default_entitlement_days); const carried = Number(balance?.carried_forward_days || 0); const reserved = Number(balance?.reserved_days || 0); const consumed = Number(balance?.consumed_days || 0); const available = entitlement + carried - reserved - consumed; return <article key={type.id} className="leave-balance-card"><p>{type.name}</p><strong>{available}</strong><span>days available</span><div><small>{entitlement + carried} entitled</small><small>{reserved} reserved</small><small>{consumed} used</small></div></article>; })}</div>;
+}
+
+function LeaveRequestTable({ leaveRequests, expandedId, onExpandedId, onCancel, emptyTitle }: { leaveRequests: LeaveRequest[]; expandedId: string | null; onExpandedId: (id: string | null) => void; onCancel: MyRequestsWorkspaceProps['onCancelLeave']; emptyTitle: string }) {
+  if (!leaveRequests.length) return <EmptyRequests title={emptyTitle} message="Leave requests will appear here as they move through the approval process." />;
   return <div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Leave type</th><th>Date range</th><th>Duration</th><th>Submitted</th></tr></thead><tbody>
     {leaveRequests.map((request) => {
       const rowId = `leave-${request.id}`;
       const isOpen = expandedId === rowId;
       return <Fragment key={request.id}>
         <tr className="request-row-clickable" onClick={() => onExpandedId(isOpen ? null : rowId)}>
-          <td><span className={`status ${requestStatusTone(request.status)}`}>{requestStatusLabel(request.status)}</span></td>
-          <td><strong className="request-type">{leaveTypeLabel(request.leave_type)}</strong></td>
+          <td><span className={`status ${requestStatusTone(request.workflow_stage || request.status)}`}>{leaveStageLabel(request.workflow_stage, request.status)}</span></td>
+          <td><strong className="request-type">{request.leave_type_record?.name || leaveTypeLabel(request.leave_type)}</strong></td>
           <td>{compactDateRange(request.start_date, request.end_date)}</td>
           <td>{request.duration_days} {request.duration_days === 1 ? 'day' : 'days'}</td>
           <td>{formatDateTime(request.created_at)}</td>
@@ -1689,10 +1817,12 @@ function LeaveRequestsPanel({ leaveRequests, expandedId, onExpandedId }: { leave
         {isOpen && <tr className="request-detail-row"><td colSpan={5}>
           <div className="request-inline-detail">
             <div><span>Leave period</span><strong>{compactDateRange(request.start_date, request.end_date)}</strong></div>
-            <div><span>Reviewed</span><strong>{formatDateTime(request.reviewed_at)}</strong></div>
-            <div><span>Status</span><strong>{requestStatusLabel(request.status)}</strong></div>
+            <div><span>Submitted to</span><strong>{request.supervisor?.full_name || 'Assigned supervisor'}</strong></div>
+            <div><span>Current stage</span><strong>{leaveStageLabel(request.workflow_stage, request.status)}</strong></div>
             <div className="wide"><span>Reason / comment</span><strong>{request.reason || 'No reason provided.'}</strong></div>
             {request.reviewer_note && <div className="wide"><span>Reviewer note</span><strong>{request.reviewer_note}</strong></div>}
+            <div className="wide"><span>Approval timeline</span><div className="approval-timeline">{request.events?.length ? request.events.map((event) => <p key={event.id}><strong>{event.event_type.replaceAll('_', ' ')}</strong> <span>{formatDateTime(event.created_at)}</span>{event.note && <small>{event.note}</small>}</p>) : <p><strong>Submitted</strong> <span>{formatDateTime(request.created_at)}</span></p>}</div></div>
+            {['supervisor_pending', 'hr_pending'].includes(request.workflow_stage || '') && <div className="wide request-cancel"><button type="button" className="reject-button" onClick={async (event) => { event.stopPropagation(); if (window.confirm('Cancel this leave request and release the reserved balance?')) await onCancel(request.id, 'Cancelled by requester'); }}>Cancel request</button></div>}
           </div>
         </td></tr>}
       </Fragment>;
@@ -1825,9 +1955,9 @@ function ApprovalDetails({ item, onClose, onDecision }: { item: ApprovalItem; on
   return <div className="detail-backdrop" role="presentation" onMouseDown={onClose}>
     <aside className="detail-drawer approval-drawer" role="dialog" aria-modal="true" aria-label="Approval request details" onMouseDown={(event) => event.stopPropagation()}>
       <div className="detail-drawer-head"><div><p className="eyebrow">{isLeave ? 'LEAVE APPROVAL' : 'CORRECTION APPROVAL'}</p><h2>{item.requester.full_name}</h2><p>{item.requester.employee_id} / {item.requester.department || 'Unassigned department'}</p></div><button className="close-button" aria-label="Close approval details" onClick={onClose}>x</button></div>
-      <div className="detail-status-line"><span className={`status ${requestStatusTone(item.status)}`}>{item.status === 'pending' ? 'Pending review' : item.status === 'approved' ? 'Approved' : 'Rejected'}</span><span>Submitted {formatDateTime(item.created_at)}</span></div>
+      <div className="detail-status-line"><span className={`status ${requestStatusTone(item.status)}`}>{isLeave ? leaveStageLabel(item.leave?.workflow_stage, item.status) : item.status === 'pending' ? 'Pending review' : item.status === 'approved' ? 'Approved' : 'Rejected'}</span><span>Submitted {formatDateTime(item.created_at)}</span></div>
       {isLeave && item.leave ? <>
-        <section className="detail-section"><h3>Leave request</h3><div className="detail-grid"><DetailPair label="Leave type" value={leaveTypeLabel(item.leave.leave_type)} /><DetailPair label="Duration" value={`${item.leave.duration_days} day${item.leave.duration_days === 1 ? '' : 's'}`} /><DetailPair label="Start date" value={displayDate(item.leave.start_date)} /><DetailPair label="End date" value={displayDate(item.leave.end_date)} /></div></section>
+        <section className="detail-section"><h3>Leave request</h3><div className="detail-grid"><DetailPair label="Leave type" value={item.leave.leave_type_record?.name || leaveTypeLabel(item.leave.leave_type)} /><DetailPair label="Duration" value={`${item.leave.duration_days} day${item.leave.duration_days === 1 ? '' : 's'}`} /><DetailPair label="Start date" value={displayDate(item.leave.start_date)} /><DetailPair label="End date" value={displayDate(item.leave.end_date)} /><DetailPair label="Submitted to" value={item.leave.supervisor?.full_name || 'Assigned supervisor'} /><DetailPair label="Current stage" value={leaveStageLabel(item.leave.workflow_stage, item.leave.status)} /></div></section>
         <RequestNote label="Employee reason" value={item.leave.reason || 'No reason provided.'} />
       </> : item.correction ? <>
         <section className="detail-section"><h3>Attendance correction</h3><div className="detail-grid"><DetailPair label="Affected date" value={displayDate(item.correction.work_date)} /><DetailPair label="Correction type" value={requestTypeLabel(item).replace(' correction', '')} /><DetailPair label="Original clock in" value={formatTime(item.attendance?.clock_in)} /><DetailPair label="Original clock out" value={formatTime(item.attendance?.clock_out)} /><DetailPair label="Corrected clock in" value={formatTime(item.correction.corrected_clock_in)} /><DetailPair label="Corrected clock out" value={formatTime(item.correction.corrected_clock_out)} /></div></section>
@@ -1835,7 +1965,7 @@ function ApprovalDetails({ item, onClose, onDecision }: { item: ApprovalItem; on
       </> : null}
       {item.status !== 'pending' && <RequestNote label={item.status === 'rejected' ? 'Reason for rejection' : 'Reviewer note'} value={(request?.reviewer_note || 'No reviewer note provided.')} tone={item.status === 'rejected' ? 'red' : 'green'} />}
       {item.status === 'pending' && <section className="detail-section decision-section">
-        {!decision ? <div className="decision-actions"><button className="approve-button" onClick={() => setDecision('approved')}>Approve request</button><button className="reject-button" onClick={() => setDecision('rejected')}>Reject request</button></div> : <div className="decision-form"><h3>{decision === 'approved' ? 'Approve this request?' : 'Reject this request?'}</h3><p>{decision === 'approved' ? 'This decision will update the employee request immediately.' : 'Provide a clear reason for the employee before rejecting this request.'}</p><label>Reviewer note{decision === 'rejected' ? ' (required)' : ' (optional)'}<textarea autoFocus={decision === 'rejected'} value={reviewerNote} onChange={(event) => setReviewerNote(event.target.value)} placeholder={decision === 'rejected' ? 'Explain why this request cannot be approved.' : 'Add an optional note for the employee.'} /></label>{formError && <p className="decision-error" role="alert">{formError}</p>}<div className="decision-actions"><button className="secondary-button" disabled={processing} onClick={() => { setDecision(null); setFormError(null); }}>Cancel</button><button className={decision === 'approved' ? 'approve-button' : 'reject-button'} disabled={processing} onClick={() => void submitDecision()}>{processing ? 'Saving decision...' : decision === 'approved' ? 'Confirm approval' : 'Confirm rejection'}</button></div></div>}
+        {!decision ? <div className="decision-actions"><button className="approve-button" onClick={() => setDecision('approved')}>{isLeave && item.leave?.workflow_stage === 'supervisor_pending' ? 'Approve and send to HR' : 'Approve request'}</button><button className="reject-button" onClick={() => setDecision('rejected')}>Reject request</button></div> : <div className="decision-form"><h3>{decision === 'approved' ? 'Approve this request?' : 'Reject this request?'}</h3><p>{decision === 'approved' ? (isLeave && item.leave?.workflow_stage === 'supervisor_pending' ? 'This approval routes the request to a configured HR approver for the final decision.' : 'This decision will update the employee request immediately.') : 'Provide a clear reason for the employee before rejecting this request.'}</p><label>Reviewer note{decision === 'rejected' ? ' (required)' : ' (optional)'}<textarea autoFocus={decision === 'rejected'} value={reviewerNote} onChange={(event) => setReviewerNote(event.target.value)} placeholder={decision === 'rejected' ? 'Explain why this request cannot be approved.' : 'Add an optional note for the employee.'} /></label>{formError && <p className="decision-error" role="alert">{formError}</p>}<div className="decision-actions"><button className="secondary-button" disabled={processing} onClick={() => { setDecision(null); setFormError(null); }}>Cancel</button><button className={decision === 'approved' ? 'approve-button' : 'reject-button'} disabled={processing} onClick={() => void submitDecision()}>{processing ? 'Saving decision...' : decision === 'approved' ? 'Confirm approval' : 'Confirm rejection'}</button></div></div>}
       </section>}
     </aside>
   </div>;

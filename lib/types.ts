@@ -52,11 +52,48 @@ export type TeamRow = {
 };
 
 export type RequestStatus = 'pending' | 'approved' | 'rejected';
+export type LeaveWorkflowStage = 'supervisor_pending' | 'hr_pending' | 'approved' | 'rejected' | 'cancelled';
+
+export type LeaveType = {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  legacy_value: string;
+  default_entitlement_days: number;
+  requires_reason: boolean;
+  is_paid: boolean;
+  is_active: boolean;
+};
+
+export type LeaveBalance = {
+  id: string;
+  user_id: string;
+  leave_type_id: string;
+  leave_year: number;
+  entitlement_days: number;
+  carried_forward_days: number;
+  reserved_days: number;
+  consumed_days: number;
+  leave_type?: LeaveType;
+};
+
+export type LeaveRequestEvent = {
+  id: string;
+  leave_request_id: string;
+  actor_id: string | null;
+  event_type: string;
+  from_stage: string | null;
+  to_stage: string | null;
+  note: string | null;
+  created_at: string;
+};
 
 export type LeaveRequest = {
   id: string;
   user_id: string;
-  leave_type: 'annual' | 'sick' | 'other';
+  leave_type: string;
+  leave_type_id?: string | null;
   start_date: string;
   end_date: string;
   duration_days: number;
@@ -65,6 +102,21 @@ export type LeaveRequest = {
   reviewed_by?: string | null;
   reviewed_at?: string | null;
   reviewer_note?: string | null;
+  workflow_stage?: LeaveWorkflowStage;
+  supervisor_id?: string | null;
+  supervisor_reviewed_at?: string | null;
+  supervisor_note?: string | null;
+  hr_approver_id?: string | null;
+  hr_reviewed_at?: string | null;
+  hr_note?: string | null;
+  cancelled_at?: string | null;
+  cancellation_reason?: string | null;
+  balance_year?: number | null;
+  reserved_days?: number;
+  leave_type_record?: LeaveType;
+  supervisor?: Pick<Profile, 'id' | 'full_name'> | null;
+  hr_approver?: Pick<Profile, 'id' | 'full_name'> | null;
+  events?: LeaveRequestEvent[];
   created_at: string;
   updated_at: string;
 };
