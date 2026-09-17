@@ -27,7 +27,7 @@ type Office = {
 type Department = { id: string; name: string; is_active: boolean };
 type JobTitle = { id: string; name: string; is_active: boolean };
 type OrganisationTab = 'employees' | 'departments' | 'job_titles' | 'offices';
-type PortalView = 'attendance' | 'approvals' | 'reports' | 'organisation';
+type PortalView = 'attendance' | 'requests' | 'approvals' | 'reports' | 'organisation';
 type StatusFilter = 'all' | 'attention' | 'on_duty' | 'completed' | 'leave' | 'location';
 type AttendanceScope = 'mine' | 'team';
 type ApprovalScope = 'pending' | 'reviewed' | 'all';
@@ -188,7 +188,10 @@ function formatDateTime(value: string | null | undefined) {
 
 function requestTypeLabel(item: ApprovalItem) {
   if (item.kind === 'leave') return 'Leave request';
-  const type = item.correction?.correction_type;
+  return correctionTypeLabel(item.correction?.correction_type);
+}
+
+function correctionTypeLabel(type?: string | null) {
   return type === 'both' ? 'Clock in and out correction' : type === 'clock_in' ? 'Clock in correction' : 'Clock out correction';
 }
 
@@ -196,8 +199,23 @@ function leaveTypeLabel(type?: string) {
   return type === 'annual' ? 'Annual leave' : type === 'sick' ? 'Sick leave' : 'Other leave';
 }
 
+function requestStatusLabel(status?: string | null) {
+  return status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Pending approval';
+}
+
 function requestStatusTone(status: string) {
   return status === 'approved' ? 'green' : status === 'rejected' ? 'red' : 'amber';
+}
+
+function compactDateRange(startDate: string, endDate: string) {
+  return startDate === endDate ? displayDate(startDate) : `${displayDate(startDate)} - ${displayDate(endDate)}`;
+}
+
+function correctionNeedActionLabel(record: AttendanceRecord) {
+  if (record.status === 'absent') return 'Missed Clock In & Clock Out';
+  if (record.clock_in && !record.clock_out) return 'Missed Clock Out';
+  if (!record.clock_in && record.clock_out) return 'Missed Clock In';
+  return 'Missed Clock In & Clock Out';
 }
 
 function exportReportCsv(rows: ReportRow[], startDate: string, endDate: string) {
@@ -359,6 +377,11 @@ export default function PortalPage() {
   const [approvalDepartmentFilter, setApprovalDepartmentFilter] = useState('all');
   const [approvalSearch, setApprovalSearch] = useState('');
   const [selectedApproval, setSelectedApproval] = useState<ApprovalItem | null>(null);
+  const [myLeaveRequests, setMyLeaveRequests] = useState<LeaveRequest[]>([]);
+  const [myCorrectionRequests, setMyCorrectionRequests] = useState<CorrectionRequest[]>([]);
+  const [myNeedActionRecords, setMyNeedActionRecords] = useState<AttendanceRecord[]>([]);
+  const [myRequestsLoading, setMyRequestsLoading] = useState(false);
+  const [myRequestsError, setMyRequestsError] = useState<string | null>(null);
   const [reportRows, setReportRows] = useState<ReportRow[]>([]);
   const [reportLoading, setReportLoading] = useState(false);
   const [reportError, setReportError] = useState<string | null>(null);
@@ -389,6 +412,10 @@ export default function PortalPage() {
         setTeam([]);
         setApprovalItems([]);
         setSelectedApproval(null);
+        setMyLeaveRequests([]);
+        setMyCorrectionRequests([]);
+        setMyNeedActionRecords([]);
+        setMyRequestsError(null);
         setReportRows([]);
         setReportError(null);
         setOrganisationProfiles([]);
@@ -413,6 +440,13 @@ export default function PortalPage() {
   // selectedDate intentionally refreshes the team register.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attendanceScope, session?.user.id, selectedDate]);
+
+  useEffect(() => {
+    if (!session?.user || !supabase || activeView !== 'requests') return;
+    void loadMyRequestsData();
+  // My Requests loads only when the employee request centre is opened.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeView, session?.user.id]);
 
   useEffect(() => {
     const canReviewRequests = roles.some((role) => role === 'supervisor' || role === 'hr' || role === 'admin');
@@ -645,6 +679,53 @@ export default function PortalPage() {
       setReportError(caught instanceof Error ? caught.message : 'WorkPulse could not load the report data.');
     } finally {
       setReportLoading(false);
+    }
+  }
+
+  async function loadMyRequestsData() {
+    if (!supabase || !session?.user) return;
+    setMyRequestsLoading(true);
+    setMyRequestsError(null);
+    try {
+      const [leaveResponse, correctionResponse, attentionResponse] = await Promise.all([
+        supabase
+          .from('leave_requests')
+          .select('id, user_id, leave_type, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, created_at, updated_at')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('correction_requests')
+          .select('id, user_id, attendance_record_id, work_date, correction_type, corrected_clock_in, corrected_clock_out, reason, status, reviewed_by, reviewed_at, reviewer_note, created_at, updated_at')
+          .eq('user_id', session.user.id)
+          .order('created_at', { ascending: false }),
+        supabase
+          .from('attendance_records')
+          .select('id, user_id, work_date, clock_in, clock_out, status, clock_in_location_status, clock_in_verified_office_location_id')
+          .eq('user_id', session.user.id)
+          .in('status', ['absent', 'missed_punch'])
+          .order('work_date', { ascending: false })
+          .limit(90),
+      ]);
+      if (leaveResponse.error) throw leaveResponse.error;
+      if (correctionResponse.error) throw correctionResponse.error;
+      if (attentionResponse.error) throw attentionResponse.error;
+
+      const corrections = (correctionResponse.data || []) as unknown as CorrectionRequest[];
+      const pendingCorrectionKeys = new Set(
+        corrections
+          .filter((request) => request.status === 'pending')
+          .flatMap((request) => [request.attendance_record_id, request.work_date].filter(Boolean) as string[]),
+      );
+      const needAction = ((attentionResponse.data || []) as unknown as AttendanceRecord[])
+        .filter((record) => !pendingCorrectionKeys.has(record.id) && !pendingCorrectionKeys.has(record.work_date));
+
+      setMyLeaveRequests((leaveResponse.data || []) as unknown as LeaveRequest[]);
+      setMyCorrectionRequests(corrections);
+      setMyNeedActionRecords(needAction);
+    } catch (caught) {
+      setMyRequestsError(caught instanceof Error ? caught.message : 'WorkPulse could not load your requests.');
+    } finally {
+      setMyRequestsLoading(false);
     }
   }
 
@@ -975,6 +1056,7 @@ export default function PortalPage() {
         <div className="workspace-label">WORKSPACE</div>
         <nav className="main-nav" aria-label="Portal navigation">
           <NavItem active={activeView === 'attendance'} icon={<GridIcon />} label="Attendance" onClick={() => setActiveView('attendance')} />
+          <NavItem active={activeView === 'requests'} icon={<ClipboardIcon />} label="My Requests" onClick={() => setActiveView('requests')} />
           {canReview && <NavItem active={activeView === 'approvals'} icon={<ClipboardIcon />} label="Approvals" onClick={() => setActiveView('approvals')} />}
           <NavItem active={activeView === 'reports'} icon={<ChartIcon />} label="Reports" onClick={() => setActiveView('reports')} />
           {canManageOrganisation && <NavItem active={activeView === 'organisation'} icon={<SettingsIcon />} label="Organisation" onClick={() => setActiveView('organisation')} />}
@@ -1009,6 +1091,14 @@ export default function PortalPage() {
             attendanceScope={resolvedAttendanceScope}
             onAttendanceScope={setAttendanceScope}
             onViewRow={setSelectedRow}
+          />
+        ) : activeView === 'requests' ? (
+          <MyRequestsWorkspace
+            needActionRecords={myNeedActionRecords}
+            correctionRequests={myCorrectionRequests}
+            leaveRequests={myLeaveRequests}
+            loading={myRequestsLoading}
+            error={myRequestsError}
           />
         ) : activeView === 'approvals' ? (
           <ApprovalsWorkspace
@@ -1467,6 +1557,153 @@ function EmployeeReportWorkspace({
 
 function ReportEmptyState() { return <div className="state"><strong>No attendance records found</strong><span>Try a broader date range or change the current report filters.</span></div>; }
 
+type MyRequestsWorkspaceProps = {
+  needActionRecords: AttendanceRecord[];
+  correctionRequests: CorrectionRequest[];
+  leaveRequests: LeaveRequest[];
+  loading: boolean;
+  error: string | null;
+};
+
+function MyRequestsWorkspace({ needActionRecords, correctionRequests, leaveRequests, loading, error }: MyRequestsWorkspaceProps) {
+  const [section, setSection] = useState<'corrections' | 'leave'>('corrections');
+  const [correctionTab, setCorrectionTab] = useState<'need_action' | 'submitted'>('need_action');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const pendingCount = correctionRequests.filter((request) => request.status === 'pending').length
+    + leaveRequests.filter((request) => request.status === 'pending').length;
+  const reviewedCount = correctionRequests.filter((request) => request.status !== 'pending').length
+    + leaveRequests.filter((request) => request.status !== 'pending').length;
+
+  return <div className="requests-workspace">
+    <section className="my-requests-toolbar">
+      <div>
+        <p className="eyebrow">MY REQUESTS</p>
+        <h2>Request centre</h2>
+        <p>Track attendance corrections and leave requests submitted from WorkPulse.</p>
+      </div>
+      <div className="request-summary-grid">
+        <RequestStat label="Need action" value={needActionRecords.length} tone="amber" />
+        <RequestStat label="Pending" value={pendingCount} tone="blue" />
+        <RequestStat label="Reviewed" value={reviewedCount} tone="green" />
+      </div>
+    </section>
+
+    <section className="register-panel my-requests-panel">
+      <div className="requests-section-tabs">
+        <button type="button" className={section === 'corrections' ? 'active' : ''} onClick={() => { setSection('corrections'); setExpandedId(null); }}>Attendance Corrections</button>
+        <button type="button" className={section === 'leave' ? 'active' : ''} onClick={() => { setSection('leave'); setExpandedId(null); }}>Leave Requests</button>
+      </div>
+
+      {loading ? <div className="state"><div className="loader" /><strong>Loading your requests</strong><span>Checking WorkPulse records linked to your account.</span></div>
+        : error ? <div className="state error"><strong>{error}</strong></div>
+          : section === 'corrections'
+            ? <CorrectionRequestsPanel
+              tab={correctionTab}
+              onTab={setCorrectionTab}
+              needActionRecords={needActionRecords}
+              correctionRequests={correctionRequests}
+              expandedId={expandedId}
+              onExpandedId={setExpandedId}
+            />
+            : <LeaveRequestsPanel leaveRequests={leaveRequests} expandedId={expandedId} onExpandedId={setExpandedId} />}
+    </section>
+  </div>;
+}
+
+function RequestStat({ label, value, tone }: { label: string; value: number; tone: 'amber' | 'blue' | 'green' }) {
+  return <div className={`request-stat ${tone}`}><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function CorrectionRequestsPanel({
+  tab,
+  onTab,
+  needActionRecords,
+  correctionRequests,
+  expandedId,
+  onExpandedId,
+}: {
+  tab: 'need_action' | 'submitted';
+  onTab: (tab: 'need_action' | 'submitted') => void;
+  needActionRecords: AttendanceRecord[];
+  correctionRequests: CorrectionRequest[];
+  expandedId: string | null;
+  onExpandedId: (id: string | null) => void;
+}) {
+  return <>
+    <div className="requests-filter-bar">
+      <div className="filter-chips" role="group" aria-label="Attendance correction type">
+        <button type="button" className={`filter-chip ${tab === 'need_action' ? 'active' : ''}`} onClick={() => onTab('need_action')}>Need Action <span>{needActionRecords.length}</span></button>
+        <button type="button" className={`filter-chip ${tab === 'submitted' ? 'active' : ''}`} onClick={() => onTab('submitted')}>Submitted <span>{correctionRequests.length}</span></button>
+      </div>
+    </div>
+    {tab === 'need_action' ? (
+      needActionRecords.length ? <div className="request-card-list">
+        {needActionRecords.map((record) => <article key={record.id} className="request-card">
+          <div><span>Affected date</span><strong>{displayDate(record.work_date)}</strong></div>
+          <div><span>Correction type</span><strong>{correctionNeedActionLabel(record)}</strong></div>
+          <span className={`status ${statusTone(record.status)}`}>{statusLabel[record.status] || record.status}</span>
+        </article>)}
+      </div> : <EmptyRequests title="No correction action needed" message="Missed or absent attendance records will appear here when they need your attention." />
+    ) : (
+      correctionRequests.length ? <div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Affected date</th><th>Request</th><th>Submitted</th></tr></thead><tbody>
+        {correctionRequests.map((request) => {
+          const rowId = `correction-${request.id}`;
+          const isOpen = expandedId === rowId;
+          return <Fragment key={request.id}>
+            <tr className="request-row-clickable" onClick={() => onExpandedId(isOpen ? null : rowId)}>
+              <td><span className={`status ${requestStatusTone(request.status)}`}>{requestStatusLabel(request.status)}</span></td>
+              <td>{displayDate(request.work_date)}</td>
+              <td><strong className="request-type">{correctionTypeLabel(request.correction_type)}</strong></td>
+              <td>{formatDateTime(request.created_at)}</td>
+            </tr>
+            {isOpen && <tr className="request-detail-row"><td colSpan={4}>
+              <div className="request-inline-detail">
+                <div><span>Corrected clock in</span><strong>{formatTime(request.corrected_clock_in)}</strong></div>
+                <div><span>Corrected clock out</span><strong>{formatTime(request.corrected_clock_out)}</strong></div>
+                <div><span>Reviewed</span><strong>{formatDateTime(request.reviewed_at)}</strong></div>
+                <div className="wide"><span>Reason</span><strong>{request.reason || '--'}</strong></div>
+                {request.reviewer_note && <div className="wide"><span>Reviewer note</span><strong>{request.reviewer_note}</strong></div>}
+              </div>
+            </td></tr>}
+          </Fragment>;
+        })}
+      </tbody></table></div> : <EmptyRequests title="No submitted corrections" message="Submitted correction requests will appear here." />
+    )}
+  </>;
+}
+
+function LeaveRequestsPanel({ leaveRequests, expandedId, onExpandedId }: { leaveRequests: LeaveRequest[]; expandedId: string | null; onExpandedId: (id: string | null) => void }) {
+  if (!leaveRequests.length) return <EmptyRequests title="No leave requests yet" message="Submitted leave requests will appear here." />;
+  return <div className="table-wrap"><table className="request-table"><thead><tr><th>Status</th><th>Leave type</th><th>Date range</th><th>Duration</th><th>Submitted</th></tr></thead><tbody>
+    {leaveRequests.map((request) => {
+      const rowId = `leave-${request.id}`;
+      const isOpen = expandedId === rowId;
+      return <Fragment key={request.id}>
+        <tr className="request-row-clickable" onClick={() => onExpandedId(isOpen ? null : rowId)}>
+          <td><span className={`status ${requestStatusTone(request.status)}`}>{requestStatusLabel(request.status)}</span></td>
+          <td><strong className="request-type">{leaveTypeLabel(request.leave_type)}</strong></td>
+          <td>{compactDateRange(request.start_date, request.end_date)}</td>
+          <td>{request.duration_days} {request.duration_days === 1 ? 'day' : 'days'}</td>
+          <td>{formatDateTime(request.created_at)}</td>
+        </tr>
+        {isOpen && <tr className="request-detail-row"><td colSpan={5}>
+          <div className="request-inline-detail">
+            <div><span>Leave period</span><strong>{compactDateRange(request.start_date, request.end_date)}</strong></div>
+            <div><span>Reviewed</span><strong>{formatDateTime(request.reviewed_at)}</strong></div>
+            <div><span>Status</span><strong>{requestStatusLabel(request.status)}</strong></div>
+            <div className="wide"><span>Reason / comment</span><strong>{request.reason || 'No reason provided.'}</strong></div>
+            {request.reviewer_note && <div className="wide"><span>Reviewer note</span><strong>{request.reviewer_note}</strong></div>}
+          </div>
+        </td></tr>}
+      </Fragment>;
+    })}
+  </tbody></table></div>;
+}
+
+function EmptyRequests({ title, message }: { title: string; message: string }) {
+  return <div className="state request-empty"><strong>{title}</strong><span>{message}</span></div>;
+}
+
 type ApprovalsWorkspaceProps = {
   items: ApprovalItem[];
   loading: boolean;
@@ -1771,7 +2008,7 @@ function OrganisationLoadingState() { return <div className="state"><div classNa
 function OrganisationErrorState({ message }: { message: string }) { return <div className="state error"><strong>Unable to load organisation data</strong><span>{message}</span></div>; }
 
 function viewTitle(view: PortalView) {
-  return ({ attendance: 'Attendance', approvals: 'Approvals', reports: 'Reports', organisation: 'Organisation' })[view];
+  return ({ attendance: 'Attendance', requests: 'My Requests', approvals: 'Approvals', reports: 'Reports', organisation: 'Organisation' })[view];
 }
 
 function LoginScreen({ email, password, error, signingIn, onEmail, onPassword, onSubmit }: { email: string; password: string; error: string | null; signingIn: boolean; onEmail: (value: string) => void; onPassword: (value: string) => void; onSubmit: (event: FormEvent) => void }) {

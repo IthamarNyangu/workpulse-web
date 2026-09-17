@@ -300,3 +300,47 @@ button { cursor:pointer; }
   .organisation-metrics { gap:10px; }.organisation-tabs { padding:13px 16px; }
   .organisation-tab { padding:8px 11px; }.organisation-empty { min-height:190px; }
 }
+
+/* My Requests: employee request centre for corrections and leave. */
+.requests-workspace { display:grid; gap:24px; }
+.my-requests-toolbar { display:flex; align-items:center; justify-content:space-between; gap:24px; padding:26px 28px; border:1px solid #dce1df; border-radius:17px; background:#eff2f1; }
+.my-requests-toolbar h2 { margin:7px 0 5px; font-size:26px; letter-spacing:-.8px; }
+.my-requests-toolbar p:not(.eyebrow) { margin:0; color:var(--ink-soft); font-size:14px; }
+.request-summary-grid { display:grid; grid-template-columns:repeat(3,minmax(108px,1fr)); gap:10px; min-width:min(420px,100%); }
+.request-stat { border:1px solid var(--line); border-radius:13px; background:#fff; padding:13px 15px; }
+.request-stat span { display:block; color:var(--ink-soft); font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.6px; }
+.request-stat strong { display:block; margin-top:5px; color:var(--ink); font-size:25px; }
+.request-stat.green strong { color:var(--green); }
+.request-stat.blue strong { color:#2d6aea; }
+.request-stat.amber strong { color:#b45f07; }
+.my-requests-panel { margin-top:0; }
+.requests-section-tabs { padding:14px; border-bottom:1px solid var(--line); display:flex; gap:10px; background:#fbfcfb; }
+.requests-section-tabs button { border:1px solid #d4ddd6; border-radius:999px; background:#fff; color:var(--ink-soft); padding:10px 15px; font-size:13px; font-weight:900; cursor:pointer; }
+.requests-section-tabs button.active { border-color:var(--green); background:var(--green); color:#fff; }
+.requests-filter-bar { padding:14px 25px; border-bottom:1px solid var(--line); }
+.filter-chip span { margin-left:6px; border-radius:999px; padding:2px 7px; background:rgba(255,255,255,.22); }
+.filter-chip:not(.active) span { background:#edf0f4; color:var(--ink-soft); }
+.request-card-list { padding:18px 25px; display:grid; gap:12px; }
+.request-card { display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1.4fr) auto; align-items:center; gap:16px; border:1px solid #dfe7e2; border-radius:13px; background:#fff; padding:16px; }
+.request-card span:not(.status) { display:block; color:var(--ink-soft); font-size:12px; font-weight:800; }
+.request-card strong { color:var(--ink); font-size:14px; }
+.request-table { min-width:860px; }
+.request-table .request-row-clickable { cursor:pointer; }
+.request-table .request-row-clickable:hover { background:#f8fbf9; }
+.request-detail-row td { padding:0 18px 18px; background:#fbfdfb; white-space:normal; }
+.request-inline-detail { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:11px; padding:14px; border:1px solid #dfe7e2; border-radius:12px; background:#f8fbf9; }
+.request-inline-detail div { border-radius:10px; background:#fff; padding:11px 12px; }
+.request-inline-detail .wide { grid-column:1 / -1; }
+.request-inline-detail span { display:block; margin-bottom:5px; color:var(--ink-soft); font-size:11px; font-weight:900; text-transform:uppercase; letter-spacing:.55px; }
+.request-inline-detail strong { color:var(--ink); font-size:13px; line-height:1.45; white-space:normal; }
+.request-empty { min-height:210px; }
+
+@media (max-width:820px) {
+  .my-requests-toolbar { align-items:flex-start; flex-direction:column; padding:20px; }
+  .request-summary-grid { width:100%; grid-template-columns:repeat(3,minmax(0,1fr)); min-width:0; }
+  .requests-section-tabs { overflow:auto; }
+  .requests-section-tabs button { white-space:nowrap; }
+  .request-card-list { padding:14px 16px; }
+  .request-card { grid-template-columns:1fr; align-items:start; }
+  .request-inline-detail { grid-template-columns:1fr; }
+}
