@@ -426,6 +426,8 @@ export default function PortalPage() {
   const [organisationOffices, setOrganisationOffices] = useState<Office[]>([]);
   const [organisationLoading, setOrganisationLoading] = useState(false);
   const [organisationError, setOrganisationError] = useState<string | null>(null);
+  const [hrSyncing, setHrSyncing] = useState(false);
+  const [hrSyncResult, setHrSyncResult] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -932,6 +934,38 @@ export default function PortalPage() {
     }
   }
 
+  async function syncHrDirectory() {
+    if (!session?.access_token) return;
+    setHrSyncing(true);
+    setHrSyncResult(null);
+    setOrganisationError(null);
+    try {
+      const response = await fetch('/api/integrations/hr/sync', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.access_token}` },
+      });
+      const result = await response.json() as {
+        message?: string;
+        received?: number;
+        linked_profiles?: number;
+        supervisor_assignments?: number;
+        unlinked_employees?: number;
+        active_employees?: number;
+        inactive_employees?: number;
+        active_unlinked_employees?: number;
+        departments_synced?: number;
+        job_titles_synced?: number;
+      };
+      if (!response.ok) throw new Error(result.message || 'The HR directory could not be synchronized.');
+      setHrSyncResult(`${result.active_employees || 0} active employees · ${result.departments_synced || 0} departments · ${result.job_titles_synced || 0} job titles · ${result.linked_profiles || 0} accounts linked · ${result.active_unlinked_employees || 0} awaiting account setup · ${result.inactive_employees || 0} inactive`);
+      await loadOrganisationData();
+    } catch (caught) {
+      setOrganisationError(caught instanceof Error ? caught.message : 'The HR directory could not be synchronized.');
+    } finally {
+      setHrSyncing(false);
+    }
+  }
+
   async function handleApprovalDecision(item: ApprovalItem, decision: 'approved' | 'rejected', reviewerNote: string) {
     if (!supabase || !profile || item.status !== 'pending') return false;
     if (decision === 'rejected' && !reviewerNote.trim()) return false;
@@ -1265,6 +1299,9 @@ export default function PortalPage() {
           offices={organisationOffices}
           loading={organisationLoading}
           error={organisationError}
+          hrSyncing={hrSyncing}
+          hrSyncResult={hrSyncResult}
+          onHrSync={syncHrDirectory}
         />}
       </section>
       {selectedRow && <AttendanceDetails row={selectedRow} onClose={() => setSelectedRow(null)} />}
@@ -2133,6 +2170,9 @@ function OrganisationWorkspace({
   offices,
   loading,
   error,
+  hrSyncing,
+  hrSyncResult,
+  onHrSync,
 }: {
   profiles: Profile[];
   departments: Department[];
@@ -2140,6 +2180,9 @@ function OrganisationWorkspace({
   offices: Office[];
   loading: boolean;
   error: string | null;
+  hrSyncing: boolean;
+  hrSyncResult: string | null;
+  onHrSync: () => void;
 }) {
   const [tab, setTab] = useState<OrganisationTab>('employees');
   const [query, setQuery] = useState('');
@@ -2183,8 +2226,12 @@ function OrganisationWorkspace({
   return <div className="page-content organisation-page">
     <section className="organisation-hero">
       <div><p className="eyebrow">ORGANISATION</p><h2>People, structure and work sites</h2><p>Review the current WorkPulse organisation setup from one desktop workspace.</p></div>
-      <div className="organisation-summary"><span>Active employees</span><strong>{profiles.filter((person) => person.is_active).length}</strong></div>
+      <div className="organisation-actions">
+        <div className="organisation-summary"><span>Active employees</span><strong>{profiles.filter((person) => person.is_active).length}</strong></div>
+        <button type="button" className="hr-sync-button" onClick={onHrSync} disabled={hrSyncing}>{hrSyncing ? 'Syncing…' : 'Sync from HR'}</button>
+      </div>
     </section>
+    {hrSyncResult && <div className="hr-sync-result" role="status"><strong>HR directory synchronized.</strong><span>{hrSyncResult}</span></div>}
     <section className="metric-grid organisation-metrics">
       <Metric label="Employees" value={profiles.length} tone="blue" />
       <Metric label="Departments" value={departments.filter((department) => department.is_active).length} tone="green" />
