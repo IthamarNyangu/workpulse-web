@@ -1,7 +1,7 @@
-:root { --ink:#14233f; --ink-soft:#5f6e87; --canvas:#f3f5f3; --line:#dce2df; --green:#13894a; --green-deep:#08643c; --green-wash:#e4f3e9; --blue:#2868df; --blue-wash:#e8efff; --amber:#b75b08; --amber-wash:#fff0df; --red:#c52644; --red-wash:#fbe7ea; --purple:#6d32ac; --purple-wash:#f1e7ff; --sidebar:#13213a; --sidebar-soft:#1d2e4d; }
+:root { --text-primary:#101828; --text-secondary:#344054; --text-muted:#667085; --text-subtle:#98a2b3; --surface:#fff; --surface-subtle:#f8fafc; --border:#e4e7ec; --nav-bg:#12233f; --nav-text:#cbd5e1; --nav-text-muted:#7f95b5; --nav-text-active:#fff; --brand-green:#157347; --brand-green-dark:#0f5132; --ink:var(--text-primary); --ink-soft:var(--text-muted); --canvas:#f5f7f6; --line:var(--border); --green:var(--brand-green); --green-deep:var(--brand-green-dark); --green-wash:#eaf5ee; --blue:#2868df; --blue-wash:#eaf0fc; --amber:#a8550a; --amber-wash:#fff4e8; --red:#c52543; --red-wash:#fcecef; --purple:#6b3aae; --purple-wash:#f3edfb; --sidebar:var(--nav-bg); --sidebar-soft:#1d3150; }
 * { box-sizing:border-box; }
 html,body { min-height:100%; }
-body { margin:0; color:var(--ink); background:var(--canvas); font-family:"Aptos Display","Trebuchet MS",sans-serif; }
+body { margin:0; color:var(--text-primary); background:var(--canvas); font-family:var(--font-inter),Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif; font-size:14px; font-weight:400; line-height:1.5; -webkit-font-smoothing:antialiased; }
 button,input { font:inherit; }
 button { cursor:pointer; }
 .portal-shell { min-height:100vh; display:grid; grid-template-columns:272px minmax(0,1fr); transition:grid-template-columns .2s ease; }
@@ -113,6 +113,81 @@ button { cursor:pointer; }
   .filter-field { justify-content:space-between; }
   .filter-field select { width:68%; }
   .table-pagination { align-items:flex-start; flex-direction:column; }
+}
+
+/* Enterprise typography and visual-system refinement. */
+h1,h2,h3,p { text-wrap:pretty; }
+strong { font-weight:600; }
+button,input,select,textarea { font-family:inherit; }
+button { font-size:14px; font-weight:600; }
+
+.topbar h1 { color:var(--text-primary); font-size:31px; font-weight:650; line-height:1.18; letter-spacing:-.02em; }
+.eyebrow { color:var(--brand-green-dark); font-size:11px; font-weight:600; line-height:1.3; letter-spacing:.08em; }
+.today-label { color:var(--text-muted); font-size:13px; font-weight:500; }
+.date-button { color:var(--text-secondary); font-size:14px; font-weight:600; }
+
+.sidebar { color:var(--nav-text); }
+.brand-lockup { font-weight:650; letter-spacing:-.02em; }
+.workspace-label { color:var(--nav-text-muted); font-size:11px; font-weight:600; letter-spacing:.1em; }
+.nav-item { color:var(--nav-text); font-size:14px; font-weight:500; }
+.nav-item.active { color:var(--nav-text-active); font-weight:600; }
+.request-subnav button { color:var(--nav-text-muted); font-size:12px; font-weight:500; }
+.request-subnav button.active { color:var(--nav-text-active); font-weight:600; }
+.user-chip { font-weight:400; }.user-chip strong { font-weight:600; }.user-chip small { color:#9fb0c8; font-weight:400; }
+.signout { color:var(--nav-text); font-size:13px; font-weight:500; }
+
+.hero-panel h2,.approvals-toolbar h2,.reports-toolbar h2,.my-requests-toolbar h2,.organisation-hero h2 { color:var(--text-primary); font-size:25px; font-weight:650; line-height:1.2; letter-spacing:-.02em; }
+.hero-panel p:not(.eyebrow),.approvals-toolbar p:not(.eyebrow),.reports-toolbar p:not(.eyebrow),.my-requests-toolbar p:not(.eyebrow),.organisation-hero p:not(.eyebrow) { color:var(--text-muted); font-size:14px; font-weight:400; line-height:1.5; }
+.register-head h2,.detail-section h3,.leave-form-head h3 { color:var(--text-secondary); font-weight:600; letter-spacing:-.01em; }
+.register-head h2 { font-size:16px; }.detail-section h3 { font-size:16px; }.leave-form-head h3 { font-size:24px; color:var(--text-primary); }
+
+.register-panel,.hero-panel,.approvals-toolbar,.reports-toolbar,.my-requests-toolbar,.organisation-hero,.employee-report-header { border-color:var(--border); box-shadow:none; }
+.approvals-toolbar,.reports-toolbar,.my-requests-toolbar,.organisation-hero,.employee-report-header { background:#f3f5f4; }
+.register-panel { border-radius:14px; }.hero-panel,.approvals-toolbar,.reports-toolbar,.my-requests-toolbar,.organisation-hero { border-radius:14px; }
+
+th { color:var(--text-muted); font-size:11px; font-weight:600; letter-spacing:.08em; }
+td { color:var(--text-secondary); font-size:13px; font-weight:450; }
+.employee-cell strong,.approval-table .request-type,.request-table .request-type { color:var(--text-primary); font-size:14px; font-weight:550; }
+.employee-cell small { color:var(--text-muted); font-size:11px; font-weight:400; }
+.request-detail { color:var(--text-secondary); font-weight:400; }
+.request-card span:not(.status),.request-inline-detail span,.detail-pair span,.employee-report-meta span { color:var(--text-muted); font-size:12px; font-weight:550; letter-spacing:.02em; }
+.request-card strong,.request-inline-detail strong,.detail-pair strong,.employee-report-meta strong { color:var(--text-primary); font-size:14px; font-weight:500; }
+
+.status { border-radius:7px; padding:5px 8px; font-size:10px; font-weight:600; letter-spacing:.01em; }
+.status.green { color:#17643a; background:#e9f5ed; }.status.blue { color:#2859a6; background:#edf2fb; }.status.amber { color:#8b4a12; background:#fff2e4; }.status.red { color:#a9273e; background:#fbecef; }.status.purple { color:#623995; background:#f2edfa; }.status.slate { color:#526074; background:#f0f2f5; }
+
+.metric,.request-stat,.report-metric,.organisation-summary,.leave-balance-card { border-color:var(--border); border-radius:10px; box-shadow:none; }
+.metric span,.request-stat span,.report-metric span,.organisation-summary span { color:var(--text-muted); font-size:12px; font-weight:500; letter-spacing:.03em; }
+.metric strong { font-size:29px; font-weight:600; }.request-stat strong { font-size:28px; font-weight:600; }.report-metric strong { font-weight:600; }
+
+.filter-chip,.organisation-tab,.attendance-scope-tabs button,.requests-section-tabs button { font-size:13px; font-weight:550; }
+.filter-chip,.organisation-tab { border-radius:8px; }.filter-chip span { font-weight:550; }
+.filter-field,.department-filter,.leave-form-grid label,.correction-form label,.decision-form label { color:var(--text-muted); font-size:12px; font-weight:550; }
+.filter-field select,.department-filter select,.leave-form-grid input,.leave-form-grid select,.leave-form-grid textarea,.correction-form select,.correction-form input,.correction-form textarea,.search-box { border-color:#d0d5dd; border-radius:8px; color:var(--text-primary); font-size:14px; font-weight:400; }
+
+.approve-button,.reject-button,.secondary-button,.primary-button,.report-export,.leave-apply-tab,.table-pagination button { border-radius:8px; font-size:14px; font-weight:600; }
+.approve-button,.primary-button,.report-export { background:var(--brand-green); border-color:var(--brand-green); }.approve-button:hover:not(:disabled),.primary-button:hover:not(:disabled),.report-export:hover:not(:disabled) { background:var(--brand-green-dark); }
+.secondary-button { border-color:#d0d5dd; color:var(--text-secondary); background:var(--surface); }
+.leave-apply-tab { box-shadow:none; }
+.row-action,.report-details-button,.back-to-reports { font-weight:600; }
+
+.table-pagination { color:var(--text-muted); font-size:12px; font-weight:500; }
+.table-pagination button { font-size:12px; }.table-pagination button:disabled { background:#f8fafc; color:var(--text-subtle); border-color:var(--border); }
+.workspace .table-wrap { background:var(--surface-subtle); }
+.workspace .table-wrap tbody > tr:not(.request-detail-row) > td { border-color:var(--border); }
+
+.detail-drawer-head h2 { color:var(--text-primary); font-size:28px; font-weight:650; letter-spacing:-.02em; }
+.detail-drawer-head p:not(.eyebrow),.detail-status-line { color:var(--text-muted); font-weight:400; }
+.detail-pair { border-color:var(--border); background:var(--surface-subtle); }
+.request-note h3 { color:var(--text-muted); font-size:12px; font-weight:600; }.request-note p { font-size:14px; font-weight:400; }
+
+.notification-head strong,.notification-list strong { font-weight:600; }.notification-head span,.notification-list small { color:var(--text-muted); font-weight:400; }
+.leave-calculation span { color:var(--text-muted); font-weight:550; }.leave-calculation strong { font-weight:600; }
+.leave-balance-card p { color:var(--text-secondary); font-weight:600; }.leave-balance-card>strong { font-weight:600; }.leave-balance-card>span,.leave-balance-card div { color:var(--text-muted); font-weight:400; }
+
+@media (max-width:820px) {
+  .topbar h1 { font-size:26px; }
+  .hero-panel h2,.approvals-toolbar h2,.reports-toolbar h2,.my-requests-toolbar h2,.organisation-hero h2 { font-size:23px; }
 }
 
 /* Shared, high-contrast hover and focus treatment for portal actions. */
@@ -407,4 +482,28 @@ button { cursor:pointer; }
   .correction-action-card { grid-template-columns:1fr; }
   .request-inline-detail { grid-template-columns:1fr; }
   .leave-form-head { align-items:stretch; flex-direction:column; }.leave-calculation { min-width:0; width:100%; }.leave-form-grid { grid-template-columns:1fr; }.leave-form-grid .reason-field { grid-column:auto; }.leave-form-actions .approve-button { width:100%; }.correction-time-grid { grid-template-columns:1fr; }
+}
+
+/* Final cascade for module styles declared later in this stylesheet. */
+.approvals-toolbar h2,.reports-toolbar h2,.my-requests-toolbar h2,.organisation-hero h2 { color:var(--text-primary); font-size:25px; font-weight:650; line-height:1.2; letter-spacing:-.02em; }
+.approvals-toolbar p:not(.eyebrow),.reports-toolbar p:not(.eyebrow),.my-requests-toolbar p:not(.eyebrow),.organisation-hero p:not(.eyebrow) { color:var(--text-muted); font-size:14px; font-weight:400; line-height:1.5; }
+.approvals-toolbar,.reports-toolbar,.my-requests-toolbar,.organisation-hero,.employee-report-header { border-color:var(--border); border-radius:14px; background:#f3f5f4; box-shadow:none; }
+.approval-filter-group,.filter-field,.report-date-field,.report-select-field,.leave-form-grid label,.correction-form label { color:var(--text-muted); font-weight:550; }
+.approval-table .request-type,.request-table .request-type { color:var(--text-primary); font-size:14px; font-weight:550; }
+.approve-button,.reject-button,.secondary-button,.report-export,.report-details-button,.back-to-reports { font-weight:600; }
+.approve-button,.reject-button,.secondary-button { font-size:14px; border-radius:8px; }
+.report-range-actions button,.organisation-tab,.requests-section-tabs button,.filter-chip,.leave-apply-tab { font-weight:550; }
+.report-metric span,.request-stat span,.organisation-summary span { color:var(--text-muted); font-size:12px; font-weight:500; }
+.report-metric strong,.request-stat strong,.organisation-summary strong { font-weight:600; }
+.employee-report-header h2,.organisation-hero h2 { font-weight:650; letter-spacing:-.02em; }
+.employee-report-header p:not(.eyebrow),.employee-report-profile p:not(.eyebrow),.organisation-hero p:not(.eyebrow) { color:var(--text-muted); font-weight:400; }
+.employee-report-profile h3 { color:var(--text-primary); font-weight:600; }.employee-report-meta span { color:var(--text-muted); font-weight:550; }.employee-report-meta strong { color:var(--text-primary); font-weight:500; }
+.organisation-tab { border-radius:8px; }.organisation-summary { border-color:var(--border); border-radius:10px; }
+.request-stat { border-color:var(--border); border-radius:10px; box-shadow:none; }.request-card span:not(.status),.request-inline-detail span { color:var(--text-muted); font-weight:550; }.request-card strong,.request-inline-detail strong { color:var(--text-primary); font-weight:500; }
+.leave-form-head h3 { color:var(--text-primary); font-size:24px; font-weight:600; letter-spacing:-.02em; }.leave-calculation span { color:var(--text-muted); font-weight:550; }.leave-calculation strong { font-weight:600; }
+.leave-balance-card { border-color:var(--border); border-radius:10px; box-shadow:none; }.leave-balance-card p,.leave-balance-card>strong { font-weight:600; }.leave-balance-card>span,.leave-balance-card div { color:var(--text-muted); font-weight:400; }
+.correction-form label,.decision-form label { color:var(--text-muted); font-weight:550; }.decision-form h3 { color:var(--text-primary); font-weight:600; }.decision-form>p { color:var(--text-muted); font-weight:400; }
+
+@media (max-width:820px) {
+  .approvals-toolbar h2,.reports-toolbar h2,.my-requests-toolbar h2,.organisation-hero h2 { font-size:23px; }
 }

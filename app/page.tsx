@@ -1372,7 +1372,7 @@ function AttendanceWorkspace({
         <label className="filter-field">Status<select value={statusFilter} onChange={(event) => onStatusFilter(event.target.value as StatusFilter)}>{statusFilters.map((filter) => <option key={filter.value} value={filter.value}>{filter.label}</option>)}</select></label>
         <label className="filter-field">Department<select value={departmentFilter} onChange={(event) => onDepartmentFilter(event.target.value)}><option value="all">All departments</option>{departments.map((department) => <option key={department} value={department}>{department}</option>)}</select></label>
       </div>
-      {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <EmptyState /> : <><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Verified office</th><th></th></tr></thead><tbody>{pagedRows.map((row) => <AttendanceRow key={row.profile.id} row={row} onView={() => onViewRow(row)} />)}</tbody></table></div><PaginationControls page={safePage} pageCount={pageCount} onPage={setCurrentPage} /></>}
+      {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <EmptyState /> : <><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Verified office</th></tr></thead><tbody>{pagedRows.map((row) => <AttendanceRow key={row.profile.id} row={row} onView={() => onViewRow(row)} />)}</tbody></table></div><PaginationControls page={safePage} pageCount={pageCount} onPage={setCurrentPage} /></>}
     </section>
   </div>;
 }
@@ -2087,7 +2087,7 @@ function AttendanceRow({ row, onView }: { row: TeamRow; onView: () => void }) {
   const attendance = row.attendance;
   const status = effectiveStatus(row);
   const officeLabel = row.officeName || (attendance?.clock_in_location_status === 'outside_all_offices' ? 'Location exception' : '--');
-  return <tr>
+  return <tr className="request-row-clickable" tabIndex={0} role="button" aria-label={`View attendance details for ${row.profile.full_name}`} onClick={onView} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onView(); } }}>
     <td><div className="employee-cell"><span className="table-avatar">{row.profile.full_name.slice(0, 1)}</span><span><strong>{row.profile.full_name}</strong><small>{row.profile.employee_id} / {row.profile.job_title || 'No job title'}</small></span></div></td>
     <td>{row.profile.department || 'Unassigned'}</td>
     <td><span className={`status ${statusTone(status)}`}>{statusLabel[status]}</span></td>
@@ -2095,7 +2095,6 @@ function AttendanceRow({ row, onView }: { row: TeamRow; onView: () => void }) {
     <td>{formatTime(attendance?.clock_out)}</td>
     <td>{workHours(attendance)}</td>
     <td>{officeLabel}</td>
-    <td><button className="row-action" aria-label={`View ${row.profile.full_name}`} onClick={onView}>View <ArrowIcon size={15} /></button></td>
   </tr>;
 }
 
