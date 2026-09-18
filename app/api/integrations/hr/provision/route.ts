@@ -27,6 +27,52 @@ function authorized(request: NextRequest, expected: string) {
   return suppliedBytes.length === expectedBytes.length && timingSafeEqual(suppliedBytes, expectedBytes);
 }
 
+export async function GET(request: NextRequest) {
+  try {
+    const env = environment();
+    if (!authorized(request, env.integrationToken)) {
+      return NextResponse.json({ message: 'Invalid HR integration token.' }, { status: 401 });
+    }
+    const sourceId = Number(request.nextUrl.searchParams.get('employee_source_id'));
+    if (!Number.isInteger(sourceId) || sourceId <= 0) {
+      return NextResponse.json({ message: 'A valid employee_source_id is required.' }, { status: 422 });
+    }
+
+    const admin = createClient(env.supabaseUrl, env.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const [{ data: employee, error: employeeError }, { data: profile, error: profileError }, { data: latestEvent, error: eventError }] = await Promise.all([
+      admin.from('hr_directory_employees').select('source_id,employee_no,full_name,work_email,is_active').eq('source_id', sourceId).maybeSingle(),
+      admin.from('profiles').select('id,email,is_active').eq('hr_employee_source_id', sourceId).maybeSingle(),
+      admin.from('workpulse_onboarding_events').select('action,details,created_at').eq('hr_employee_source_id', sourceId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+    ]);
+    if (employeeError || profileError || eventError) throw employeeError || profileError || eventError;
+    if (!employee) return NextResponse.json({ message: 'Employee has not been synchronized from HR.' }, { status: 404 });
+
+    let status = employee.is_active ? 'not_enabled' : 'ineligible';
+    let lastSignInAt: string | null = null;
+    if (profile) {
+      const { data: authUser, error: authError } = await admin.auth.admin.getUserById(profile.id);
+      if (authError) throw authError;
+      lastSignInAt = authUser.user?.last_sign_in_at || null;
+      status = !profile.is_active ? 'deactivated' : lastSignInAt ? 'active' : 'invitation_pending';
+    } else if (latestEvent?.action === 'invite_failed') {
+      status = 'invitation_failed';
+    } else if (latestEvent?.action === 'validated') {
+      status = 'ready';
+    }
+
+    return NextResponse.json({
+      status,
+      employee_source_id: sourceId,
+      profile_id: profile?.id || null,
+      account_email: profile?.email || null,
+      last_sign_in_at: lastSignInAt,
+      latest_event: latestEvent || null,
+    });
+  } catch (error) {
+    return NextResponse.json({ message: error instanceof Error ? error.message : 'WorkPulse account status could not be loaded.' }, { status: 500 });
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const env = environment();
