@@ -27,6 +27,7 @@ type Office = {
 };
 type Department = { id: string; name: string; is_active: boolean };
 type JobTitle = { id: string; name: string; is_active: boolean };
+type HrDirectoryEmployee = { source_id: number; employee_no: string; full_name: string; work_email: string | null; department_name: string | null; job_title_name: string | null; is_active: boolean };
 type OrganisationTab = 'employees' | 'departments' | 'job_titles' | 'offices';
 type PortalView = 'attendance' | 'requests' | 'approvals' | 'reports' | 'organisation';
 type StatusFilter = 'all' | 'attention' | 'on_duty' | 'completed' | 'leave' | 'location';
@@ -421,6 +422,7 @@ export default function PortalPage() {
   const [reportEmployeeFilter, setReportEmployeeFilter] = useState('all');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [organisationProfiles, setOrganisationProfiles] = useState<Profile[]>([]);
+  const [hrDirectoryEmployees, setHrDirectoryEmployees] = useState<HrDirectoryEmployee[]>([]);
   const [organisationDepartments, setOrganisationDepartments] = useState<Department[]>([]);
   const [organisationJobTitles, setOrganisationJobTitles] = useState<JobTitle[]>([]);
   const [organisationOffices, setOrganisationOffices] = useState<Office[]>([]);
@@ -906,11 +908,29 @@ export default function PortalPage() {
     setOrganisationLoading(true);
     setOrganisationError(null);
     try {
-      const [profilesResponse, departmentsResponse, jobTitlesResponse, officesResponse] = await Promise.all([
+      const directoryPromise = (async () => {
+        const records: HrDirectoryEmployee[] = [];
+        const batchSize = 1000;
+        for (let from = 0; ; from += batchSize) {
+          const { data, error } = await supabase
+            .from('hr_directory_employees')
+            .select('source_id, employee_no, full_name, work_email, department_name, job_title_name, is_active')
+            .eq('is_active', true)
+            .order('full_name')
+            .range(from, from + batchSize - 1);
+          if (error) throw error;
+          const batch = (data || []) as HrDirectoryEmployee[];
+          records.push(...batch);
+          if (batch.length < batchSize) break;
+        }
+        return records;
+      })();
+      const [profilesResponse, directoryResponse, departmentsResponse, jobTitlesResponse, officesResponse] = await Promise.all([
         supabase
           .from('profiles')
-          .select('id, employee_id, full_name, email, role, department, job_title, is_active')
+          .select('id, employee_id, full_name, email, role, department, job_title, is_active, hr_employee_source_id')
           .order('full_name'),
+        directoryPromise,
         supabase.from('departments').select('id, name, is_active').order('name'),
         supabase.from('job_titles').select('id, name, is_active').order('name'),
         supabase
@@ -924,6 +944,7 @@ export default function PortalPage() {
       if (officesResponse.error) throw officesResponse.error;
 
       setOrganisationProfiles((profilesResponse.data || []) as Profile[]);
+      setHrDirectoryEmployees(directoryResponse);
       setOrganisationDepartments((departmentsResponse.data || []) as Department[]);
       setOrganisationJobTitles((jobTitlesResponse.data || []) as JobTitle[]);
       setOrganisationOffices((officesResponse.data || []) as Office[]);
@@ -1294,6 +1315,7 @@ export default function PortalPage() {
           />
         ) : <OrganisationWorkspace
           profiles={organisationProfiles}
+          directoryEmployees={hrDirectoryEmployees}
           departments={organisationDepartments}
           jobTitles={organisationJobTitles}
           offices={organisationOffices}
@@ -2165,6 +2187,7 @@ function EmptyState() { return <div className="state"><strong>No team records fo
 
 function OrganisationWorkspace({
   profiles,
+  directoryEmployees,
   departments,
   jobTitles,
   offices,
@@ -2175,6 +2198,7 @@ function OrganisationWorkspace({
   onHrSync,
 }: {
   profiles: Profile[];
+  directoryEmployees: HrDirectoryEmployee[];
   departments: Department[];
   jobTitles: JobTitle[];
   offices: Office[];
@@ -2189,24 +2213,25 @@ function OrganisationWorkspace({
   const [page, setPage] = useState(0);
   const pageSize = 10;
 
-  const filteredProfiles = useMemo(() => {
+  const activeDepartments = useMemo(() => departments.filter((item) => item.is_active), [departments]);
+  const activeJobTitles = useMemo(() => jobTitles.filter((item) => item.is_active), [jobTitles]);
+  const filteredEmployees = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return profiles;
-    return profiles.filter((person) => [
+    if (!needle) return directoryEmployees;
+    return directoryEmployees.filter((person) => [
       person.full_name,
-      person.employee_id,
-      person.email,
-      person.department,
-      person.job_title,
-      roleLabel[person.role],
+      person.employee_no,
+      person.work_email,
+      person.department_name,
+      person.job_title_name,
     ].filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
-  }, [profiles, query]);
+  }, [directoryEmployees, query]);
 
-  const filteredDepartments = useMemo(() => filterOrganisationItems(departments, query, (item) => [item.name]), [departments, query]);
-  const filteredJobTitles = useMemo(() => filterOrganisationItems(jobTitles, query, (item) => [item.name]), [jobTitles, query]);
+  const filteredDepartments = useMemo(() => filterOrganisationItems(activeDepartments, query, (item) => [item.name]), [activeDepartments, query]);
+  const filteredJobTitles = useMemo(() => filterOrganisationItems(activeJobTitles, query, (item) => [item.name]), [activeJobTitles, query]);
   const filteredOffices = useMemo(() => filterOrganisationItems(offices, query, (item) => [item.office_name, item.province, item.district]), [offices, query]);
   const selectedItems = tab === 'employees'
-    ? filteredProfiles
+    ? filteredEmployees
     : tab === 'departments'
       ? filteredDepartments
       : tab === 'job_titles'
@@ -2227,15 +2252,15 @@ function OrganisationWorkspace({
     <section className="organisation-hero">
       <div><p className="eyebrow">ORGANISATION</p><h2>People, structure and work sites</h2><p>Review the current WorkPulse organisation setup from one desktop workspace.</p></div>
       <div className="organisation-actions">
-        <div className="organisation-summary"><span>Active employees</span><strong>{profiles.filter((person) => person.is_active).length}</strong></div>
+      <div className="organisation-summary"><span>Active employees</span><strong>{directoryEmployees.length}</strong></div>
         <button type="button" className="hr-sync-button" onClick={onHrSync} disabled={hrSyncing}>{hrSyncing ? 'Syncing…' : 'Sync from HR'}</button>
       </div>
     </section>
     {hrSyncResult && <div className="hr-sync-result" role="status"><strong>HR directory synchronized.</strong><span>{hrSyncResult}</span></div>}
     <section className="metric-grid organisation-metrics">
-      <Metric label="Employees" value={profiles.length} tone="blue" />
-      <Metric label="Departments" value={departments.filter((department) => department.is_active).length} tone="green" />
-      <Metric label="Job titles" value={jobTitles.filter((jobTitle) => jobTitle.is_active).length} tone="purple" />
+      <Metric label="Employees" value={directoryEmployees.length} tone="blue" />
+      <Metric label="Departments" value={activeDepartments.length} tone="green" />
+      <Metric label="Job titles" value={activeJobTitles.length} tone="purple" />
       <Metric label="Work sites" value={offices.filter((office) => office.is_active !== false).length} tone="amber" />
     </section>
     <section className="register-panel organisation-panel">
@@ -2244,14 +2269,14 @@ function OrganisationWorkspace({
         <label className="search-box organisation-search"><SearchIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={organisationSearchPlaceholder(tab)} aria-label={`Search ${organisationTabLabel(tab).toLowerCase()}`} />{query && <button type="button" className="clear-search" onClick={() => setQuery('')} aria-label="Clear search">x</button>}</label>
       </div>
       <div className="organisation-tabs" role="tablist" aria-label="Organisation data">
-        <OrganisationTabButton active={tab === 'employees'} label="Employees" count={profiles.length} onClick={() => setTab('employees')} />
-        <OrganisationTabButton active={tab === 'departments'} label="Departments" count={departments.length} onClick={() => setTab('departments')} />
-        <OrganisationTabButton active={tab === 'job_titles'} label="Job titles" count={jobTitles.length} onClick={() => setTab('job_titles')} />
+        <OrganisationTabButton active={tab === 'employees'} label="Employees" count={directoryEmployees.length} onClick={() => setTab('employees')} />
+        <OrganisationTabButton active={tab === 'departments'} label="Departments" count={activeDepartments.length} onClick={() => setTab('departments')} />
+        <OrganisationTabButton active={tab === 'job_titles'} label="Job titles" count={activeJobTitles.length} onClick={() => setTab('job_titles')} />
         <OrganisationTabButton active={tab === 'offices'} label="Office locations" count={offices.length} onClick={() => setTab('offices')} />
       </div>
       {loading ? <OrganisationLoadingState /> : error ? <OrganisationErrorState message={error} /> : <>
         <div className="table-wrap organisation-table-wrap">
-          {tab === 'employees' ? <table><thead><tr><th>Employee</th><th>Department</th><th>Job title</th><th>Access</th><th>Account</th></tr></thead><tbody>{(visibleItems as Profile[]).map((person) => <tr key={person.id}><td><div className="employee-cell"><span className="table-avatar">{person.full_name.slice(0, 1)}</span><span><strong>{person.full_name}</strong><small>{person.employee_id} / {person.email}</small></span></div></td><td>{person.department || 'Unassigned'}</td><td>{person.job_title || 'Not assigned'}</td><td>{roleLabel[person.role]}</td><td><span className={`status ${person.is_active ? 'green' : 'slate'}`}>{person.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
+          {tab === 'employees' ? <table><thead><tr><th>Employee</th><th>Department</th><th>Job title</th><th>WorkPulse account</th></tr></thead><tbody>{(visibleItems as HrDirectoryEmployee[]).map((person) => { const account = profiles.find((profile) => profile.employee_id.toLowerCase() === person.employee_no.toLowerCase() || profile.email?.toLowerCase() === person.work_email?.toLowerCase()); return <tr key={person.source_id}><td><div className="employee-cell"><span className="table-avatar">{person.full_name.slice(0, 1)}</span><span><strong>{person.full_name}</strong><small>{person.employee_no}{person.work_email ? ` / ${person.work_email}` : ''}</small></span></div></td><td>{person.department_name || 'Unassigned'}</td><td>{person.job_title_name || 'Not assigned'}</td><td>{account ? <span className="status green">{roleLabel[account.role]}</span> : <span className="status slate">Not set up</span>}</td></tr>; })}</tbody></table> : null}
           {tab === 'departments' ? <table><thead><tr><th>Department</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as Department[]).map((department) => <tr key={department.id}><td><strong>{department.name}</strong></td><td>{employeeCountForDepartment(department.name)}</td><td><span className={`status ${department.is_active ? 'green' : 'slate'}`}>{department.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
           {tab === 'job_titles' ? <table><thead><tr><th>Job title</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as JobTitle[]).map((jobTitle) => <tr key={jobTitle.id}><td><strong>{jobTitle.name}</strong></td><td>{employeeCountForTitle(jobTitle.name)}</td><td><span className={`status ${jobTitle.is_active ? 'green' : 'slate'}`}>{jobTitle.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
           {tab === 'offices' ? <table><thead><tr><th>Office location</th><th>Province</th><th>District</th><th>Allowed radius</th><th>Status</th></tr></thead><tbody>{(visibleItems as Office[]).map((office) => <tr key={office.id}><td><strong>{office.office_name}</strong></td><td>{office.province || '--'}</td><td>{office.district || '--'}</td><td>{office.radius_m ? `${Math.round(office.radius_m)} m` : '--'}</td><td><span className={`status ${office.is_active === false ? 'slate' : 'green'}`}>{office.is_active === false ? 'Inactive' : 'Active'}</span></td></tr>)}</tbody></table> : null}
