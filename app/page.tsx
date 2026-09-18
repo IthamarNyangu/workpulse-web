@@ -2210,22 +2210,25 @@ function OrganisationWorkspace({
 }) {
   const [tab, setTab] = useState<OrganisationTab>('employees');
   const [query, setQuery] = useState('');
+  const [employeeAccessFilter, setEmployeeAccessFilter] = useState<'all' | 'linked' | 'not_set_up' | 'missing_email'>('all');
   const [page, setPage] = useState(0);
   const pageSize = 10;
 
   const activeDepartments = useMemo(() => departments.filter((item) => item.is_active), [departments]);
   const activeJobTitles = useMemo(() => jobTitles.filter((item) => item.is_active), [jobTitles]);
+  const accountForEmployee = (person: HrDirectoryEmployee) => profiles.find((profile) => profile.employee_id.toLowerCase() === person.employee_no.toLowerCase() || Boolean(person.work_email && profile.email?.toLowerCase() === person.work_email.toLowerCase()));
   const filteredEmployees = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return directoryEmployees;
-    return directoryEmployees.filter((person) => [
-      person.full_name,
-      person.employee_no,
-      person.work_email,
-      person.department_name,
-      person.job_title_name,
-    ].filter(Boolean).some((value) => String(value).toLowerCase().includes(needle)));
-  }, [directoryEmployees, query]);
+    return directoryEmployees.filter((person) => {
+      const account = accountForEmployee(person);
+      if (employeeAccessFilter === 'linked' && !account) return false;
+      if (employeeAccessFilter === 'not_set_up' && account) return false;
+      if (employeeAccessFilter === 'missing_email' && person.work_email) return false;
+      if (!needle) return true;
+      return [person.full_name, person.employee_no, person.work_email, person.department_name, person.job_title_name]
+        .filter(Boolean).some((value) => String(value).toLowerCase().includes(needle));
+    });
+  }, [directoryEmployees, profiles, query, employeeAccessFilter]);
 
   const filteredDepartments = useMemo(() => filterOrganisationItems(activeDepartments, query, (item) => [item.name]), [activeDepartments, query]);
   const filteredJobTitles = useMemo(() => filterOrganisationItems(activeJobTitles, query, (item) => [item.name]), [activeJobTitles, query]);
@@ -2240,7 +2243,7 @@ function OrganisationWorkspace({
   const totalPages = Math.max(1, Math.ceil(selectedItems.length / pageSize));
   const visibleItems = selectedItems.slice(page * pageSize, page * pageSize + pageSize);
 
-  useEffect(() => setPage(0), [query, tab]);
+  useEffect(() => setPage(0), [query, tab, employeeAccessFilter]);
   useEffect(() => {
     if (page >= totalPages) setPage(totalPages - 1);
   }, [page, totalPages]);
@@ -2266,7 +2269,10 @@ function OrganisationWorkspace({
     <section className="register-panel organisation-panel">
       <div className="register-head organisation-head">
         <div><p className="eyebrow">DIRECTORY</p><h2>{organisationTabLabel(tab)}</h2></div>
-        <label className="search-box organisation-search"><SearchIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={organisationSearchPlaceholder(tab)} aria-label={`Search ${organisationTabLabel(tab).toLowerCase()}`} />{query && <button type="button" className="clear-search" onClick={() => setQuery('')} aria-label="Clear search">x</button>}</label>
+        <div className="organisation-directory-tools">
+          {tab === 'employees' && <label className="organisation-access-filter"><span>Account status</span><select value={employeeAccessFilter} onChange={(event) => setEmployeeAccessFilter(event.target.value as typeof employeeAccessFilter)}><option value="all">All employees</option><option value="linked">WorkPulse account</option><option value="not_set_up">Not set up</option><option value="missing_email">Missing work email</option></select></label>}
+          <label className="search-box organisation-search"><SearchIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={organisationSearchPlaceholder(tab)} aria-label={`Search ${organisationTabLabel(tab).toLowerCase()}`} />{query && <button type="button" className="clear-search" onClick={() => setQuery('')} aria-label="Clear search">x</button>}</label>
+        </div>
       </div>
       <div className="organisation-tabs" role="tablist" aria-label="Organisation data">
         <OrganisationTabButton active={tab === 'employees'} label="Employees" count={directoryEmployees.length} onClick={() => setTab('employees')} />
@@ -2276,7 +2282,7 @@ function OrganisationWorkspace({
       </div>
       {loading ? <OrganisationLoadingState /> : error ? <OrganisationErrorState message={error} /> : <>
         <div className="table-wrap organisation-table-wrap">
-          {tab === 'employees' ? <table><thead><tr><th>Employee</th><th>Department</th><th>Job title</th><th>WorkPulse account</th></tr></thead><tbody>{(visibleItems as HrDirectoryEmployee[]).map((person) => { const account = profiles.find((profile) => profile.employee_id.toLowerCase() === person.employee_no.toLowerCase() || profile.email?.toLowerCase() === person.work_email?.toLowerCase()); return <tr key={person.source_id}><td><div className="employee-cell"><span className="table-avatar">{person.full_name.slice(0, 1)}</span><span><strong>{person.full_name}</strong><small>{person.employee_no}{person.work_email ? ` / ${person.work_email}` : ''}</small></span></div></td><td>{person.department_name || 'Unassigned'}</td><td>{person.job_title_name || 'Not assigned'}</td><td>{account ? <span className="status green">{roleLabel[account.role]}</span> : <span className="status slate">Not set up</span>}</td></tr>; })}</tbody></table> : null}
+          {tab === 'employees' ? <table><thead><tr><th>Employee</th><th>Department</th><th>Job title</th><th>WorkPulse account</th></tr></thead><tbody>{(visibleItems as HrDirectoryEmployee[]).map((person) => { const account = accountForEmployee(person); return <tr key={person.source_id}><td><div className="employee-cell"><span className="table-avatar">{person.full_name.slice(0, 1)}</span><span><strong>{person.full_name}</strong><small>{person.employee_no}{person.work_email ? ` / ${person.work_email}` : ' / Missing work email'}</small></span></div></td><td>{person.department_name || 'Unassigned'}</td><td>{person.job_title_name || 'Not assigned'}</td><td>{account ? <span className="status green">{roleLabel[account.role]}</span> : <span className={`status ${person.work_email ? 'slate' : 'amber'}`}>{person.work_email ? 'Not set up' : 'Email required'}</span>}</td></tr>; })}</tbody></table> : null}
           {tab === 'departments' ? <table><thead><tr><th>Department</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as Department[]).map((department) => <tr key={department.id}><td><strong>{department.name}</strong></td><td>{employeeCountForDepartment(department.name)}</td><td><span className={`status ${department.is_active ? 'green' : 'slate'}`}>{department.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
           {tab === 'job_titles' ? <table><thead><tr><th>Job title</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as JobTitle[]).map((jobTitle) => <tr key={jobTitle.id}><td><strong>{jobTitle.name}</strong></td><td>{employeeCountForTitle(jobTitle.name)}</td><td><span className={`status ${jobTitle.is_active ? 'green' : 'slate'}`}>{jobTitle.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
           {tab === 'offices' ? <table><thead><tr><th>Office location</th><th>Province</th><th>District</th><th>Allowed radius</th><th>Status</th></tr></thead><tbody>{(visibleItems as Office[]).map((office) => <tr key={office.id}><td><strong>{office.office_name}</strong></td><td>{office.province || '--'}</td><td>{office.district || '--'}</td><td>{office.radius_m ? `${Math.round(office.radius_m)} m` : '--'}</td><td><span className={`status ${office.is_active === false ? 'slate' : 'green'}`}>{office.is_active === false ? 'Inactive' : 'Active'}</span></td></tr>)}</tbody></table> : null}
