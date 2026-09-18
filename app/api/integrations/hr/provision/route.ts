@@ -4,17 +4,18 @@ import { createClient } from '@supabase/supabase-js';
 
 type ProvisionRequest = {
   employee_source_id?: number;
-  action?: 'validate' | 'invite';
+  action?: 'validate' | 'invite' | 'resend';
 };
 
 function environment() {
   const values = {
     supabaseUrl: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    anonKey: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     serviceKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
     integrationToken: process.env.HR_SYSTEM_SYNC_TOKEN,
     appUrl: process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
   };
-  if (!values.supabaseUrl || !values.serviceKey || !values.integrationToken) {
+  if (!values.supabaseUrl || !values.anonKey || !values.serviceKey || !values.integrationToken) {
     throw new Error('WorkPulse onboarding environment variables are incomplete.');
   }
   return values as Record<keyof typeof values, string>;
@@ -53,7 +54,13 @@ export async function GET(request: NextRequest) {
       const { data: authUser, error: authError } = await admin.auth.admin.getUserById(profile.id);
       if (authError) throw authError;
       lastSignInAt = authUser.user?.last_sign_in_at || null;
-      status = !profile.is_active ? 'deactivated' : lastSignInAt ? 'active' : 'invitation_pending';
+      status = !profile.is_active
+        ? 'deactivated'
+        : lastSignInAt
+          ? 'active'
+          : latestEvent?.action === 'invited' || latestEvent?.action === 'resent'
+            ? 'invitation_pending'
+            : 'account_created';
     } else if (latestEvent?.action === 'invite_failed') {
       status = 'invitation_failed';
     } else if (latestEvent?.action === 'validated') {
@@ -83,7 +90,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json() as ProvisionRequest;
     const sourceId = Number(body.employee_source_id);
     const action = body.action || 'validate';
-    if (!Number.isInteger(sourceId) || sourceId <= 0 || !['validate', 'invite'].includes(action)) {
+    if (!Number.isInteger(sourceId) || sourceId <= 0 || !['validate', 'invite', 'resend'].includes(action)) {
       return NextResponse.json({ message: 'A valid employee_source_id and action are required.' }, { status: 422 });
     }
 
@@ -117,6 +124,16 @@ export async function POST(request: NextRequest) {
       .from('profiles').select('id,email,employee_id,is_active').ilike('email', employee.work_email).limit(1).maybeSingle();
     if (emailLookup.error) throw emailLookup.error;
     const existingProfile = sourceProfile || employeeNumberLookup.data || emailLookup.data;
+    if (action === 'resend') {
+      if (!existingProfile || !employee.work_email) {
+        return NextResponse.json({ message: 'No linked WorkPulse account is available for a setup email.' }, { status: 409 });
+      }
+      const publicClient = createClient(env.supabaseUrl, env.anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+      const { error: resendError } = await publicClient.auth.resetPasswordForEmail(employee.work_email, { redirectTo: `${env.appUrl.replace(/\/$/, '')}/auth/accept-invite` });
+      await admin.from('workpulse_onboarding_events').insert({ hr_employee_source_id: sourceId, employee_no: employee.employee_no, work_email: employee.work_email, action: resendError ? 'resend_failed' : 'resent', details: resendError ? { message: resendError.message } : {} });
+      if (resendError) return NextResponse.json({ message: resendError.message }, { status: 502 });
+      return NextResponse.json({ resent: true, message: 'Account setup email requested again. Delivery has not yet been confirmed.' });
+    }
     if (existingProfile) {
       return NextResponse.json({ ready: false, existing_account: true, profile_id: existingProfile.id, message: 'This employee already has a WorkPulse account.' }, { status: 409 });
     }
@@ -132,7 +149,7 @@ export async function POST(request: NextRequest) {
     }
 
     const { data: invitation, error: inviteError } = await admin.auth.admin.inviteUserByEmail(employee.work_email, {
-      redirectTo: env.appUrl,
+      redirectTo: `${env.appUrl.replace(/\/$/, '')}/auth/accept-invite`,
       data: { full_name: employee.full_name, employee_id: employee.employee_no, hr_employee_source_id: sourceId },
     });
     if (inviteError || !invitation.user) {
@@ -154,7 +171,7 @@ export async function POST(request: NextRequest) {
     if (upsertError) throw upsertError;
 
     await admin.from('workpulse_onboarding_events').insert({ hr_employee_source_id: sourceId, employee_no: employee.employee_no, work_email: employee.work_email, action: 'invited', details: { user_id: invitation.user.id } });
-    return NextResponse.json({ ready: true, invited: true, user_id: invitation.user.id, message: 'WorkPulse invitation created.' }, { status: 201 });
+    return NextResponse.json({ ready: true, invited: true, user_id: invitation.user.id, message: 'WorkPulse invitation requested. Email delivery has not yet been confirmed.' }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ message: error instanceof Error ? error.message : 'WorkPulse onboarding failed.' }, { status: 500 });
   }
