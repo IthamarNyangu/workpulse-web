@@ -2255,7 +2255,6 @@ function OrganisationWorkspace({
     <section className="organisation-hero">
       <div><p className="eyebrow">ORGANISATION</p><h2>People, structure and work sites</h2><p>Review the current WorkPulse organisation setup from one desktop workspace.</p></div>
       <div className="organisation-actions">
-      <div className="organisation-summary"><span>Active employees</span><strong>{directoryEmployees.length}</strong></div>
         <button type="button" className="hr-sync-button" onClick={onHrSync} disabled={hrSyncing}>{hrSyncing ? 'Syncing…' : 'Sync from HR'}</button>
       </div>
     </section>
