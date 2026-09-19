@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { timingSafeEqual } from 'crypto';
 
 type Ref = { source_id: number; code: string | null; name: string; is_active?: boolean } | null;
 type HrEmployee = {
@@ -58,13 +59,20 @@ export async function POST(request: NextRequest) {
     const env = config();
     const authorization = request.headers.get('authorization');
     if (!authorization?.startsWith('Bearer ')) return NextResponse.json({ message: 'Authentication required.' }, { status: 401 });
-    const userClient = createClient(env.supabaseUrl, env.anonKey, { global: { headers: { Authorization: authorization } }, auth: { persistSession: false } });
-    const [{ data: auth, error: authError }, { data: roles, error: rolesError }] = await Promise.all([userClient.auth.getUser(authorization.slice(7)), userClient.rpc('current_user_roles')]);
-    if (authError || rolesError || !auth.user) return NextResponse.json({ message: 'Invalid WorkPulse session.' }, { status: 401 });
-    if (!((roles as string[] | null) || []).some((role) => role === 'admin' || role === 'hr')) return NextResponse.json({ message: 'HR or administrator access required.' }, { status: 403 });
+    const supplied = Buffer.from(authorization.slice(7));
+    const expected = Buffer.from(env.hrToken);
+    const serviceRequest = supplied.length === expected.length && timingSafeEqual(supplied, expected);
+    let initiatedBy: string | null = null;
+    if (!serviceRequest) {
+      const userClient = createClient(env.supabaseUrl, env.anonKey, { global: { headers: { Authorization: authorization } }, auth: { persistSession: false } });
+      const [{ data: auth, error: authError }, { data: roles, error: rolesError }] = await Promise.all([userClient.auth.getUser(authorization.slice(7)), userClient.rpc('current_user_roles')]);
+      if (authError || rolesError || !auth.user) return NextResponse.json({ message: 'Invalid WorkPulse session.' }, { status: 401 });
+      if (!((roles as string[] | null) || []).some((role) => role === 'admin' || role === 'hr')) return NextResponse.json({ message: 'HR or administrator access required.' }, { status: 403 });
+      initiatedBy = auth.user.id;
+    }
 
     const admin = createClient(env.supabaseUrl, env.serviceKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: run, error: runError } = await admin.from('hr_directory_sync_runs').insert({ initiated_by: auth.user.id }).select('id').single();
+    const { data: run, error: runError } = await admin.from('hr_directory_sync_runs').insert({ initiated_by: initiatedBy }).select('id').single();
     if (runError) throw runError;
     runId = run.id;
 

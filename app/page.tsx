@@ -28,6 +28,7 @@ type Office = {
 type Department = { id: string; name: string; is_active: boolean };
 type JobTitle = { id: string; name: string; is_active: boolean };
 type HrDirectoryEmployee = { source_id: number; employee_no: string; full_name: string; work_email: string | null; department_name: string | null; job_title_name: string | null; is_active: boolean };
+type HrSyncRun = { id: string; started_at: string; completed_at: string | null; status: 'running' | 'completed' | 'failed'; received_count: number; linked_profile_count: number; error_message: string | null };
 type OrganisationTab = 'employees' | 'departments' | 'job_titles' | 'offices';
 type PortalView = 'attendance' | 'requests' | 'approvals' | 'reports' | 'organisation';
 type StatusFilter = 'all' | 'attention' | 'on_duty' | 'completed' | 'leave' | 'location';
@@ -423,6 +424,7 @@ export default function PortalPage() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [organisationProfiles, setOrganisationProfiles] = useState<Profile[]>([]);
   const [hrDirectoryEmployees, setHrDirectoryEmployees] = useState<HrDirectoryEmployee[]>([]);
+  const [latestHrSync, setLatestHrSync] = useState<HrSyncRun | null>(null);
   const [organisationDepartments, setOrganisationDepartments] = useState<Department[]>([]);
   const [organisationJobTitles, setOrganisationJobTitles] = useState<JobTitle[]>([]);
   const [organisationOffices, setOrganisationOffices] = useState<Office[]>([]);
@@ -925,7 +927,7 @@ export default function PortalPage() {
         }
         return records;
       })();
-      const [profilesResponse, directoryResponse, departmentsResponse, jobTitlesResponse, officesResponse] = await Promise.all([
+      const [profilesResponse, directoryResponse, departmentsResponse, jobTitlesResponse, officesResponse, syncRunResponse] = await Promise.all([
         supabase
           .from('profiles')
           .select('id, employee_id, full_name, email, role, department, job_title, is_active, hr_employee_source_id')
@@ -937,17 +939,20 @@ export default function PortalPage() {
           .from('office_locations')
           .select('id, office_name, province, district, radius_m, is_active')
           .order('office_name'),
+        supabase.from('hr_directory_sync_runs').select('id,started_at,completed_at,status,received_count,linked_profile_count,error_message').order('started_at', { ascending: false }).limit(1).maybeSingle(),
       ]);
       if (profilesResponse.error) throw profilesResponse.error;
       if (departmentsResponse.error) throw departmentsResponse.error;
       if (jobTitlesResponse.error) throw jobTitlesResponse.error;
       if (officesResponse.error) throw officesResponse.error;
+      if (syncRunResponse.error) throw syncRunResponse.error;
 
       setOrganisationProfiles((profilesResponse.data || []) as Profile[]);
       setHrDirectoryEmployees(directoryResponse);
       setOrganisationDepartments((departmentsResponse.data || []) as Department[]);
       setOrganisationJobTitles((jobTitlesResponse.data || []) as JobTitle[]);
       setOrganisationOffices((officesResponse.data || []) as Office[]);
+      setLatestHrSync((syncRunResponse.data || null) as HrSyncRun | null);
     } catch (caught) {
       setOrganisationError(caught instanceof Error ? caught.message : 'WorkPulse could not load organisation data.');
     } finally {
@@ -1323,6 +1328,7 @@ export default function PortalPage() {
           error={organisationError}
           hrSyncing={hrSyncing}
           hrSyncResult={hrSyncResult}
+          latestHrSync={latestHrSync}
           onHrSync={syncHrDirectory}
         />}
       </section>
@@ -2195,6 +2201,7 @@ function OrganisationWorkspace({
   error,
   hrSyncing,
   hrSyncResult,
+  latestHrSync,
   onHrSync,
 }: {
   profiles: Profile[];
@@ -2206,6 +2213,7 @@ function OrganisationWorkspace({
   error: string | null;
   hrSyncing: boolean;
   hrSyncResult: string | null;
+  latestHrSync: HrSyncRun | null;
   onHrSync: () => void;
 }) {
   const [tab, setTab] = useState<OrganisationTab>('employees');
@@ -2250,15 +2258,18 @@ function OrganisationWorkspace({
 
   const employeeCountForDepartment = (departmentName: string) => profiles.filter((person) => person.department === departmentName).length;
   const employeeCountForTitle = (titleName: string) => profiles.filter((person) => person.job_title === titleName).length;
+  const syncStale = !latestHrSync || latestHrSync.status !== 'completed' || Date.now() - new Date(latestHrSync.completed_at || latestHrSync.started_at).getTime() > 36 * 60 * 60 * 1000;
 
   return <div className="page-content organisation-page">
     <section className="organisation-hero">
       <div><p className="eyebrow">ORGANISATION</p><h2>People, structure and work sites</h2><p>Review the current WorkPulse organisation setup from one desktop workspace.</p></div>
       <div className="organisation-actions">
-        <button type="button" className="hr-sync-button" onClick={onHrSync} disabled={hrSyncing}>{hrSyncing ? 'Syncing…' : 'Sync from HR'}</button>
+        <div className="hr-sync-control"><button type="button" className="hr-sync-button" onClick={onHrSync} disabled={hrSyncing}>{hrSyncing ? 'Syncing…' : latestHrSync?.status === 'failed' ? 'Retry HR sync' : 'Sync from HR'}</button>{latestHrSync && <span className={`hr-sync-health ${latestHrSync.status}`}>{latestHrSync.status === 'completed' ? `Last synced ${formatDateTime(latestHrSync.completed_at || latestHrSync.started_at)}` : latestHrSync.status === 'running' ? 'Sync currently running' : `Last sync failed ${formatDateTime(latestHrSync.started_at)}`}</span>}</div>
       </div>
     </section>
     {hrSyncResult && <div className="hr-sync-result" role="status"><strong>HR directory synchronized.</strong><span>{hrSyncResult}</span></div>}
+    {latestHrSync?.status === 'failed' && <div className="hr-sync-result sync-failed" role="alert"><strong>HR synchronization needs attention.</strong><span>{latestHrSync.error_message || 'Use Retry HR sync to try again.'}</span></div>}
+    {syncStale && latestHrSync?.status !== 'failed' && <div className="hr-sync-result sync-warning" role="status"><strong>HR data may be stale.</strong><span>No successful full reconciliation has completed in the last 36 hours.</span></div>}
     <section className="metric-grid organisation-metrics">
       <Metric label="Employees" value={directoryEmployees.length} tone="blue" />
       <Metric label="Departments" value={activeDepartments.length} tone="green" />
