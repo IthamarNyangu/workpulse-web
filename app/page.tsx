@@ -1328,6 +1328,7 @@ export default function PortalPage() {
             webClockLoading={webClockLoading}
             webClockError={webClockError}
             onWebClock={handleWebClock}
+            webClockEmployeeName={profile?.full_name || 'Signed-in employee'}
           />
         ) : activeView === 'requests' ? (
           <MyRequestsWorkspace
@@ -1433,6 +1434,7 @@ type AttendanceWorkspaceProps = {
   webClockLoading: boolean;
   webClockError: string | null;
   onWebClock: (input: WebClockInput) => Promise<WebClockResult>;
+  webClockEmployeeName: string;
 };
 
 function AttendanceWorkspace({
@@ -1459,6 +1461,7 @@ function AttendanceWorkspace({
   webClockLoading,
   webClockError,
   onWebClock,
+  webClockEmployeeName,
 }: AttendanceWorkspaceProps) {
   const date = new Date(`${selectedDate}T12:00:00`);
   const moveDate = (days: number) => onDateChange(dateKey(new Date(date.getTime() + days * 86_400_000)));
@@ -1496,7 +1499,7 @@ function AttendanceWorkspace({
       </div>
     </section>
 
-    <WebClockPreview attendance={webClockAttendance} offices={webClockOffices} loading={webClockLoading} error={webClockError} onClock={onWebClock} />
+    <WebClockPreview attendance={webClockAttendance} offices={webClockOffices} loading={webClockLoading} error={webClockError} onClock={onWebClock} employeeName={webClockEmployeeName} />
 
     <section className="metric-grid">
       <Metric label="Employees" value={metrics.employees} tone="ink" />
@@ -1521,7 +1524,7 @@ function AttendanceWorkspace({
   </div>;
 }
 
-function WebClockPreview({ attendance, offices, loading, error, onClock }: { attendance: AttendanceRecord | null; offices: AttendanceOffice[]; loading: boolean; error: string | null; onClock: (input: WebClockInput) => Promise<WebClockResult> }) {
+function WebClockPreview({ attendance, offices, loading, error, onClock, employeeName }: { attendance: AttendanceRecord | null; offices: AttendanceOffice[]; loading: boolean; error: string | null; onClock: (input: WebClockInput) => Promise<WebClockResult>; employeeName: string }) {
   const [selectedOfficeId, setSelectedOfficeId] = useState('');
   const [confirming, setConfirming] = useState(false);
   const [locating, setLocating] = useState(false);
@@ -1618,6 +1621,7 @@ function WebClockPreview({ attendance, offices, loading, error, onClock }: { att
       <div className="web-clock-screen">
         <div className="web-clock-brand"><span>W</span><strong>WorkPulse</strong></div>
         <p className="web-clock-date">{displayDate(dateKey())}</p>
+        <div className="web-clock-identity"><span aria-hidden="true">{employeeName.trim().charAt(0).toUpperCase()}</span><strong>Hi, {employeeName}</strong></div>
         {loading ? <div className="web-clock-message">Loading today&apos;s attendance…</div> : error ? <div className="web-clock-message error">{error}</div> : <>
           <div className={`web-clock-state ${attendance?.clock_out ? 'complete' : attendance?.clock_in ? 'active' : ''}`}>
             <span>{attendance?.clock_out ? 'Day complete' : attendance?.clock_in ? 'Currently clocked in' : 'Not clocked in'}</span>
