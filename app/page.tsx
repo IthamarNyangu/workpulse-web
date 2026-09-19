@@ -15,16 +15,10 @@ import {
   SettingsIcon,
 } from '../components/icons';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
-import type { ApprovalItem, AttendanceRecord, CorrectionRequest, LeaveBalance, LeaveRequest, LeaveRequestEvent, LeaveType, Profile, TeamRow, WorkPulseRole } from '../lib/types';
+import { submitWebClock, webAttendanceSelect } from '../lib/web-attendance';
+import type { ApprovalItem, AttendanceOffice, AttendanceRecord, CorrectionRequest, LeaveBalance, LeaveRequest, LeaveRequestEvent, LeaveType, Profile, TeamRow, WebClockInput, WebClockResult, WorkPulseRole } from '../lib/types';
 
-type Office = {
-  id: string;
-  office_name: string;
-  province?: string | null;
-  district?: string | null;
-  radius_m?: number | null;
-  is_active?: boolean;
-};
+type Office = AttendanceOffice;
 type Department = { id: string; name: string; is_active: boolean };
 type JobTitle = { id: string; name: string; is_active: boolean };
 type HrDirectoryEmployee = { source_id: number; employee_no: string; full_name: string; work_email: string | null; department_name: string | null; job_title_name: string | null; is_active: boolean };
@@ -432,6 +426,10 @@ export default function PortalPage() {
   const [organisationError, setOrganisationError] = useState<string | null>(null);
   const [hrSyncing, setHrSyncing] = useState(false);
   const [hrSyncResult, setHrSyncResult] = useState<string | null>(null);
+  const [webClockAttendance, setWebClockAttendance] = useState<AttendanceRecord | null>(null);
+  const [webClockOffices, setWebClockOffices] = useState<AttendanceOffice[]>([]);
+  const [webClockLoading, setWebClockLoading] = useState(false);
+  const [webClockError, setWebClockError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!supabase) return;
@@ -458,6 +456,9 @@ export default function PortalPage() {
         setOrganisationJobTitles([]);
         setOrganisationOffices([]);
         setOrganisationError(null);
+        setWebClockAttendance(null);
+        setWebClockOffices([]);
+        setWebClockError(null);
       }
     });
     return () => subscription.subscription.unsubscribe();
@@ -475,6 +476,13 @@ export default function PortalPage() {
   // selectedDate intentionally refreshes the team register.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [attendanceScope, session?.user.id, selectedDate]);
+
+  useEffect(() => {
+    if (!session?.user || !supabase) return;
+    void loadWebClockData();
+  // Web clocking always represents the signed-in employee's current day.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.user.id]);
 
   useEffect(() => {
     if (!session?.user || !supabase) return;
@@ -631,6 +639,47 @@ export default function PortalPage() {
       setLoading(false);
       setPortalReady(true);
     }
+  }
+
+  async function loadWebClockData() {
+    if (!supabase || !session?.user) return;
+    setWebClockLoading(true);
+    setWebClockError(null);
+    try {
+      const [attendanceResponse, officesResponse] = await Promise.all([
+        supabase
+          .from('attendance_records')
+          .select(webAttendanceSelect)
+          .eq('user_id', session.user.id)
+          .eq('work_date', dateKey())
+          .maybeSingle(),
+        supabase
+          .from('office_locations')
+          .select('id, office_name, province, district, latitude, longitude, radius_m, is_active')
+          .eq('is_active', true)
+          .order('office_name'),
+      ]);
+      if (attendanceResponse.error) throw attendanceResponse.error;
+      if (officesResponse.error) throw officesResponse.error;
+      setWebClockAttendance((attendanceResponse.data || null) as AttendanceRecord | null);
+      setWebClockOffices((officesResponse.data || []) as AttendanceOffice[]);
+    } catch (caught) {
+      setWebClockError(caught instanceof Error ? caught.message : 'Web clocking data could not be loaded.');
+    } finally {
+      setWebClockLoading(false);
+    }
+  }
+
+  async function handleWebClock(input: WebClockInput): Promise<WebClockResult> {
+    setWebClockError(null);
+    const result = await submitWebClock(input);
+    if (!result.ok) {
+      setWebClockError(result.message || 'WorkPulse could not record this attendance action.');
+      return result;
+    }
+    if (result.record) setWebClockAttendance(result.record);
+    await Promise.all([loadWebClockData(), loadPortalData()]);
+    return result;
   }
 
   async function loadReportData() {

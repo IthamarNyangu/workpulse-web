@@ -41,6 +41,42 @@ export type AttendanceRecord = {
   clock_out_verified_office_location_id?: string | null;
   clock_in_nearest_office_location_id?: string | null;
   clock_out_nearest_office_location_id?: string | null;
+  clock_in_channel?: 'mobile' | 'web' | string | null;
+  clock_out_channel?: 'mobile' | 'web' | string | null;
+  clock_in_selected_office_location_id?: string | null;
+  clock_out_selected_office_location_id?: string | null;
+  clock_in_fallback_reason?: string | null;
+  clock_out_fallback_reason?: string | null;
+  clock_in_user_agent?: string | null;
+  clock_out_user_agent?: string | null;
+};
+
+export type AttendanceOffice = {
+  id: string;
+  office_name: string;
+  province?: string | null;
+  district?: string | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  radius_m?: number | null;
+  is_active?: boolean;
+};
+
+export type WebClockAction = 'clock_in' | 'clock_out';
+
+export type WebClockInput = {
+  action: WebClockAction;
+  selectedOfficeId: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  accuracyM?: number | null;
+  fallbackReason?: string | null;
+};
+
+export type WebClockResult = {
+  ok: boolean;
+  record?: AttendanceRecord;
+  message?: string;
 };
 
 export type TeamRow = {
