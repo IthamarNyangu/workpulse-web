@@ -538,3 +538,9 @@ td { color:var(--text-secondary); font-size:13px; font-weight:450; }
 .web-clock-feedback { margin:10px 0 0; padding:9px 10px; border-radius:8px; font-size:10px; font-weight:750; text-align:center; }.web-clock-feedback.success { color:#08733e; background:#eaf7ef; }.web-clock-feedback.error { color:#a51d32; background:#fff0f2; }
 .web-clock-message { min-height:270px; display:grid; place-items:center; color:#637189; font-size:13px; text-align:center; }.web-clock-message.error { color:#b3243f; }
 @media (max-width:820px) { .web-clock-stage { grid-template-columns:1fr; padding:22px 18px; gap:24px; }.web-clock-intro { text-align:center; margin:auto; }.web-clock-assurance { justify-content:center; }.web-clock-device { max-width:320px; } }
+.web-clock-location-summary { display:grid!important; grid-template-columns:1fr!important; gap:2px!important; margin:3px 0 1px!important; }
+.web-clock-location-summary small { display:flex; justify-content:space-between; gap:10px; color:#6b788b; font-size:9px; }
+.web-clock-location-summary small strong { color:#33465f; font-weight:800; }
+.web-clock-location-summary small.inside,.web-clock-location-summary small.outside { justify-content:flex-start; margin-top:2px; font-weight:800; }
+.web-clock-location-summary small.inside { color:#08733e; }
+.web-clock-location-summary small.outside { color:#a94b12; }

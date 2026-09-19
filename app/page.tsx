@@ -177,6 +177,17 @@ function distanceLabel(value?: number | null) {
   return value >= 1000 ? `${(value / 1000).toFixed(1)} km` : `${Math.round(value)} m`;
 }
 
+function coordinateDistanceMeters(latitude: number, longitude: number, officeLatitude: number, officeLongitude: number) {
+  const radians = (degrees: number) => degrees * Math.PI / 180;
+  const latitudeDelta = radians(officeLatitude - latitude);
+  const longitudeDelta = radians(officeLongitude - longitude);
+  const startLatitude = radians(latitude);
+  const endLatitude = radians(officeLatitude);
+  const haversine = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+  return 6_371_000 * 2 * Math.asin(Math.sqrt(haversine));
+}
+
 function formatDateTime(value: string | null | undefined) {
   if (!value) return '--';
   return new Intl.DateTimeFormat('en-GB', {
@@ -1523,6 +1534,12 @@ function WebClockPreview({ attendance, offices, loading, error, onClock }: { att
   const selectedOffice = offices.find((office) => office.id === selectedOfficeId);
   const action = attendance?.clock_in ? 'clock_out' : 'clock_in';
   const actionText = action === 'clock_in' ? 'Clock in' : 'Clock out';
+  const selectedOfficeDistance = position && selectedOffice?.latitude !== null && selectedOffice?.latitude !== undefined && selectedOffice?.longitude !== null && selectedOffice?.longitude !== undefined
+    ? coordinateDistanceMeters(position.latitude, position.longitude, Number(selectedOffice.latitude), Number(selectedOffice.longitude))
+    : null;
+  const isWithinSelectedOffice = selectedOfficeDistance !== null && selectedOffice?.radius_m !== null && selectedOffice?.radius_m !== undefined
+    ? selectedOfficeDistance <= Number(selectedOffice.radius_m)
+    : null;
 
   useEffect(() => {
     if (!selectedOfficeId && offices.length) setSelectedOfficeId(offices[0].id);
@@ -1621,7 +1638,11 @@ function WebClockPreview({ attendance, offices, loading, error, onClock }: { att
           {confirming ? <div className="web-clock-confirm" role="group" aria-label={`Confirm ${actionText.toLowerCase()}`}>
             <strong>Confirm {actionText.toLowerCase()}</strong>
             <span>{selectedOffice?.office_name}</span>
-            <small>{position ? `Location captured · accuracy ${Math.round(position.accuracyM)} m` : 'Browser location unavailable'}</small>
+            {position ? <div className="web-clock-location-summary">
+              <small>Browser accuracy <strong>{distanceLabel(position.accuracyM)}</strong></small>
+              <small>Distance from office <strong>{distanceLabel(selectedOfficeDistance)}</strong></small>
+              {isWithinSelectedOffice !== null && <small className={isWithinSelectedOffice ? 'inside' : 'outside'}>{isWithinSelectedOffice ? `Within the ${distanceLabel(selectedOffice?.radius_m)} office range` : `Outside the ${distanceLabel(selectedOffice?.radius_m)} office range`}</small>}
+            </div> : <small>Browser location unavailable</small>}
             {locationUnavailable && <label>Reason location could not be verified<textarea value={fallbackReason} onChange={(event) => setFallbackReason(event.target.value)} placeholder="For example: location permission unavailable" maxLength={300} /></label>}
             <div><button type="button" className="web-clock-cancel" onClick={() => setConfirming(false)} disabled={saving}>Cancel</button><button type="button" className="web-clock-confirm-button" onClick={submitClock} disabled={saving || (locationUnavailable && !fallbackReason.trim())}>{saving ? 'Recording…' : `Confirm ${actionText.toLowerCase()}`}</button></div>
           </div> : <button type="button" className="web-clock-preview-button" onClick={prepareClock} disabled={!offices.length || Boolean(attendance?.clock_out) || locating || saving}>{attendance?.clock_out ? 'Attendance completed' : locating ? 'Checking location…' : actionText}</button>}
