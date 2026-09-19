@@ -161,6 +161,12 @@ function locationStatusLabel(status?: string | null) {
       return 'Low GPS accuracy';
     case 'no_offices_configured':
       return 'No approved offices configured';
+    case 'web_verified':
+      return 'Verified web location';
+    case 'web_outside_selected_office':
+      return 'Outside selected office';
+    case 'web_unverified':
+      return 'Web location unavailable';
     default:
       return 'No location captured';
   }
@@ -671,12 +677,8 @@ export default function PortalPage() {
   }
 
   async function handleWebClock(input: WebClockInput): Promise<WebClockResult> {
-    setWebClockError(null);
     const result = await submitWebClock(input);
-    if (!result.ok) {
-      setWebClockError(result.message || 'WorkPulse could not record this attendance action.');
-      return result;
-    }
+    if (!result.ok) return result;
     if (result.record) setWebClockAttendance(result.record);
     await Promise.all([loadWebClockData(), loadPortalData()]);
     return result;
@@ -1310,6 +1312,11 @@ export default function PortalPage() {
             attendanceScope={resolvedAttendanceScope}
             onAttendanceScope={setAttendanceScope}
             onViewRow={setSelectedRow}
+            webClockAttendance={webClockAttendance}
+            webClockOffices={webClockOffices}
+            webClockLoading={webClockLoading}
+            webClockError={webClockError}
+            onWebClock={handleWebClock}
           />
         ) : activeView === 'requests' ? (
           <MyRequestsWorkspace
@@ -1410,6 +1417,11 @@ type AttendanceWorkspaceProps = {
   attendanceScope: AttendanceScope;
   onAttendanceScope: (scope: AttendanceScope) => void;
   onViewRow: (row: TeamRow) => void;
+  webClockAttendance: AttendanceRecord | null;
+  webClockOffices: AttendanceOffice[];
+  webClockLoading: boolean;
+  webClockError: string | null;
+  onWebClock: (input: WebClockInput) => Promise<WebClockResult>;
 };
 
 function AttendanceWorkspace({
@@ -1431,6 +1443,11 @@ function AttendanceWorkspace({
   attendanceScope,
   onAttendanceScope,
   onViewRow,
+  webClockAttendance,
+  webClockOffices,
+  webClockLoading,
+  webClockError,
+  onWebClock,
 }: AttendanceWorkspaceProps) {
   const date = new Date(`${selectedDate}T12:00:00`);
   const moveDate = (days: number) => onDateChange(dateKey(new Date(date.getTime() + days * 86_400_000)));
@@ -1468,6 +1485,8 @@ function AttendanceWorkspace({
       </div>
     </section>
 
+    <WebClockPreview attendance={webClockAttendance} offices={webClockOffices} loading={webClockLoading} error={webClockError} onClock={onWebClock} />
+
     <section className="metric-grid">
       <Metric label="Employees" value={metrics.employees} tone="ink" />
       <Metric label="Clocked in" value={metrics.clockedIn} tone="blue" />
@@ -1489,6 +1508,128 @@ function AttendanceWorkspace({
       {loading ? <LoadingState /> : error ? <ErrorState message={error} /> : rows.length === 0 ? <EmptyState /> : <><div className="table-wrap"><table><thead><tr><th>Employee</th><th>Department</th><th>Status</th><th>Clock in</th><th>Clock out</th><th>Hours</th><th>Verified office</th></tr></thead><tbody>{pagedRows.map((row) => <AttendanceRow key={row.profile.id} row={row} onView={() => onViewRow(row)} />)}</tbody></table></div><PaginationControls page={safePage} pageCount={pageCount} onPage={setCurrentPage} /></>}
     </section>
   </div>;
+}
+
+function WebClockPreview({ attendance, offices, loading, error, onClock }: { attendance: AttendanceRecord | null; offices: AttendanceOffice[]; loading: boolean; error: string | null; onClock: (input: WebClockInput) => Promise<WebClockResult> }) {
+  const [selectedOfficeId, setSelectedOfficeId] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [position, setPosition] = useState<{ latitude: number; longitude: number; accuracyM: number } | null>(null);
+  const [locationUnavailable, setLocationUnavailable] = useState(false);
+  const [fallbackReason, setFallbackReason] = useState('');
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const locationRequestRef = useRef(0);
+  const selectedOffice = offices.find((office) => office.id === selectedOfficeId);
+  const action = attendance?.clock_in ? 'clock_out' : 'clock_in';
+  const actionText = action === 'clock_in' ? 'Clock in' : 'Clock out';
+
+  useEffect(() => {
+    if (!selectedOfficeId && offices.length) setSelectedOfficeId(offices[0].id);
+  }, [offices, selectedOfficeId]);
+
+  const prepareClock = () => {
+    if (!selectedOfficeId || locating || saving || attendance?.clock_out) return;
+    setMessage(null);
+    setLocating(true);
+    setPosition(null);
+    setLocationUnavailable(false);
+    setFallbackReason('');
+    const requestId = ++locationRequestRef.current;
+    const continueWithoutLocation = () => {
+      if (locationRequestRef.current !== requestId) return;
+      setLocationUnavailable(true);
+      setLocating(false);
+      setConfirming(true);
+    };
+    if (!navigator.geolocation) {
+      continueWithoutLocation();
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        if (locationRequestRef.current !== requestId) return;
+        setPosition({ latitude: coords.latitude, longitude: coords.longitude, accuracyM: coords.accuracy });
+        setLocating(false);
+        setConfirming(true);
+      },
+      continueWithoutLocation,
+      { enableHighAccuracy: true, timeout: 10_000, maximumAge: 30_000 },
+    );
+  };
+
+  const changeOffice = (officeId: string) => {
+    locationRequestRef.current += 1;
+    setSelectedOfficeId(officeId);
+    setConfirming(false);
+    setLocating(false);
+    setPosition(null);
+    setLocationUnavailable(false);
+    setFallbackReason('');
+    setMessage(null);
+  };
+
+  const submitClock = async () => {
+    if (!selectedOfficeId || saving || (locationUnavailable && !fallbackReason.trim())) return;
+    setSaving(true);
+    setMessage(null);
+    const result = await onClock({
+      action,
+      selectedOfficeId,
+      latitude: position?.latitude,
+      longitude: position?.longitude,
+      accuracyM: position?.accuracyM,
+      fallbackReason: locationUnavailable ? fallbackReason : null,
+    });
+    setSaving(false);
+    if (result.ok) {
+      setConfirming(false);
+      setMessage({ ok: true, text: `${actionText} recorded successfully.` });
+    } else {
+      setMessage({ ok: false, text: result.message || `Unable to ${actionText.toLowerCase()}.` });
+    }
+  };
+
+  return <section className="web-clock-stage" aria-labelledby="web-clock-title">
+    <div className="web-clock-intro">
+      <p className="eyebrow">WEB CLOCKING</p>
+      <h2 id="web-clock-title">Register your attendance</h2>
+      <p>Use this portal when your work phone is unavailable. Your portal and mobile attendance share the same daily record.</p>
+    </div>
+    <article className="web-clock-device">
+      <div className="web-clock-speaker" aria-hidden="true" />
+      <div className="web-clock-screen">
+        <div className="web-clock-brand"><span>W</span><strong>WorkPulse</strong></div>
+        <p className="web-clock-date">{displayDate(dateKey())}</p>
+        {loading ? <div className="web-clock-message">Loading today&apos;s attendance…</div> : error ? <div className="web-clock-message error">{error}</div> : <>
+          <div className={`web-clock-state ${attendance?.clock_out ? 'complete' : attendance?.clock_in ? 'active' : ''}`}>
+            <span>{attendance?.clock_out ? 'Day complete' : attendance?.clock_in ? 'Currently clocked in' : 'Not clocked in'}</span>
+            <strong>{attendance?.clock_out ? formatTime(attendance.clock_out) : attendance?.clock_in ? formatTime(attendance.clock_in) : '--:--'}</strong>
+            <small>{attendance?.clock_out ? 'Attendance completed' : attendance?.clock_in ? 'Ready to clock out' : 'Ready to clock in'}</small>
+          </div>
+          <label className="web-clock-office">Office location
+            <select value={selectedOfficeId} onChange={(event) => changeOffice(event.target.value)} disabled={!offices.length || Boolean(attendance?.clock_out) || saving}>
+              {!offices.length && <option value="">No active offices available</option>}
+              {offices.map((office) => <option key={office.id} value={office.id}>{office.office_name}</option>)}
+            </select>
+            {selectedOffice && <small>{[selectedOffice.district, selectedOffice.province].filter(Boolean).join(', ') || 'WorkPulse office'}</small>}
+          </label>
+          {!confirming && <div className="web-clock-times">
+            <div><span>Clock in</span><strong>{formatTime(attendance?.clock_in)}</strong></div>
+            <div><span>Clock out</span><strong>{formatTime(attendance?.clock_out)}</strong></div>
+          </div>}
+          {confirming ? <div className="web-clock-confirm" role="group" aria-label={`Confirm ${actionText.toLowerCase()}`}>
+            <strong>Confirm {actionText.toLowerCase()}</strong>
+            <span>{selectedOffice?.office_name}</span>
+            <small>{position ? `Location captured · accuracy ${Math.round(position.accuracyM)} m` : 'Browser location unavailable'}</small>
+            {locationUnavailable && <label>Reason location could not be verified<textarea value={fallbackReason} onChange={(event) => setFallbackReason(event.target.value)} placeholder="For example: location permission unavailable" maxLength={300} /></label>}
+            <div><button type="button" className="web-clock-cancel" onClick={() => setConfirming(false)} disabled={saving}>Cancel</button><button type="button" className="web-clock-confirm-button" onClick={submitClock} disabled={saving || (locationUnavailable && !fallbackReason.trim())}>{saving ? 'Recording…' : `Confirm ${actionText.toLowerCase()}`}</button></div>
+          </div> : <button type="button" className="web-clock-preview-button" onClick={prepareClock} disabled={!offices.length || Boolean(attendance?.clock_out) || locating || saving}>{attendance?.clock_out ? 'Attendance completed' : locating ? 'Checking location…' : actionText}</button>}
+          {message && <p className={`web-clock-feedback ${message.ok ? 'success' : 'error'}`} role="status">{message.text}</p>}
+        </>}
+      </div>
+    </article>
+  </section>;
 }
 
 type ReportsWorkspaceProps = {
