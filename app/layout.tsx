@@ -11,6 +11,11 @@ const inter = Inter({
 export const metadata: Metadata = {
   title: 'WorkPulse Portal',
   description: 'WorkPulse supervisor and administration portal',
+  icons: {
+    icon: '/workpulse-app-icon.png',
+    shortcut: '/workpulse-app-icon.png',
+    apple: '/workpulse-app-icon.png',
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
