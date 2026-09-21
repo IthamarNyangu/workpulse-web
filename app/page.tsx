@@ -9,7 +9,6 @@ import {
   ChartIcon,
   ClipboardIcon,
   GridIcon,
-  MarkIcon,
   SearchIcon,
   ShareIcon,
   SettingsIcon,
@@ -2544,7 +2543,7 @@ function viewTitle(view: PortalView) {
 }
 
 function LoginScreen({ email, password, error, signingIn, onEmail, onPassword, onSubmit }: { email: string; password: string; error: string | null; signingIn: boolean; onEmail: (value: string) => void; onPassword: (value: string) => void; onSubmit: (event: FormEvent) => void }) {
-  return <main className="login-page"><section className="login-identity"><div className="brand-lockup"><img className="brand-icon" src="/workpulse-app-icon.png" alt="" /><span>WorkPulse</span></div><p className="eyebrow">SUPERVISION, NOT SPREADSHEETS</p><h1>Attendance control for the people who manage teams.</h1><p>Use the same WorkPulse account as the mobile app. Your browser access is limited to the role and team scope assigned to you.</p><div className="login-note"><MarkIcon size={22} /> Shared Supabase authentication. No separate web password required.</div></section><section className="login-card"><p className="eyebrow">SECURE SIGN IN</p><h2>Welcome to the portal</h2><p>Sign in to review attendance and approvals from your desktop.</p><form onSubmit={onSubmit}><label>Work email<input type="email" autoComplete="email" value={email} onChange={(event) => onEmail(event.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required /></label>{error && <p className="login-error" role="alert">{error}</p>}<button className="primary-button" type="submit" disabled={signingIn}>{signingIn ? 'Signing in...' : 'Sign in to WorkPulse'} <ArrowIcon /></button></form></section></main>;
+  return <main className="login-page"><section className="login-identity"><div className="login-message"><h1>Manage attendance with confidence.</h1></div><img className="login-illustration" src="/workpulse-login-illustration.png" alt="A WorkPulse employee using location-enabled attendance on a mobile phone" /></section><section className="login-card"><div className="login-form-brand"><img src="/workpulse-app-icon.png" alt="" /><strong>WorkPulse</strong></div><p className="eyebrow">SECURE SIGN IN</p><h2>Welcome to the portal</h2><p>Sign in to register attendance, manage leave and review approvals.</p><form onSubmit={onSubmit}><label>Work email<input type="email" autoComplete="email" value={email} onChange={(event) => onEmail(event.target.value)} required /></label><label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => onPassword(event.target.value)} required /></label>{error && <p className="login-error" role="alert">{error}</p>}<button className="primary-button" type="submit" disabled={signingIn}>{signingIn ? 'Signing in...' : 'Sign in to WorkPulse'} <ArrowIcon /></button></form></section></main>;
 }
 
 function ConfigurationNotice() {
