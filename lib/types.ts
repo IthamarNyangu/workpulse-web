@@ -147,6 +147,9 @@ export type LeaveRequest = {
   hr_note?: string | null;
   cancelled_at?: string | null;
   cancellation_reason?: string | null;
+  overdue_notified_at?: string | null;
+  escalated_at?: string | null;
+  supervisor_locked_at?: string | null;
   balance_year?: number | null;
   reserved_days?: number;
   leave_type_record?: LeaveType;

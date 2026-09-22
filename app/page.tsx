@@ -795,7 +795,7 @@ export default function PortalPage() {
       const [leaveResponse, correctionResponse, attentionResponse, typesResponse, balancesResponse] = await Promise.all([
         supabase
           .from('leave_requests')
-          .select('id, user_id, leave_type, leave_type_id, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, workflow_stage, supervisor_id, supervisor_reviewed_at, supervisor_note, hr_approver_id, hr_reviewed_at, hr_note, cancelled_at, cancellation_reason, balance_year, reserved_days, created_at, updated_at')
+          .select('id, user_id, leave_type, leave_type_id, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, workflow_stage, supervisor_id, supervisor_reviewed_at, supervisor_note, hr_approver_id, hr_reviewed_at, hr_note, cancelled_at, cancellation_reason, overdue_notified_at, escalated_at, supervisor_locked_at, balance_year, reserved_days, created_at, updated_at')
           .eq('user_id', session.user.id)
           .order('created_at', { ascending: false }),
         supabase
@@ -896,7 +896,7 @@ export default function PortalPage() {
       const [leaveResponse, correctionResponse, hrApproverResponse] = await Promise.all([
         supabase
           .from('leave_requests')
-          .select('id, user_id, leave_type, leave_type_id, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, workflow_stage, supervisor_id, supervisor_reviewed_at, supervisor_note, hr_approver_id, hr_reviewed_at, hr_note, cancelled_at, cancellation_reason, balance_year, reserved_days, created_at, updated_at')
+          .select('id, user_id, leave_type, leave_type_id, start_date, end_date, duration_days, reason, status, reviewed_by, reviewed_at, reviewer_note, workflow_stage, supervisor_id, supervisor_reviewed_at, supervisor_note, hr_approver_id, hr_reviewed_at, hr_note, cancelled_at, cancellation_reason, overdue_notified_at, escalated_at, supervisor_locked_at, balance_year, reserved_days, created_at, updated_at')
           .order('created_at', { ascending: false }),
         supabase
           .from('correction_requests')
@@ -2184,7 +2184,7 @@ function PaginatedLeaveRequestTable({ leaveRequests, expandedId, onExpandedId, o
       const isOpen = expandedId === rowId;
       return <Fragment key={request.id}>
         <tr className="request-row-clickable" onClick={() => onExpandedId(isOpen ? null : rowId)}>
-          <td><span className={`status ${requestStatusTone(request.workflow_stage || request.status)}`}>{leaveStageLabel(request.workflow_stage, request.status)}</span></td>
+          <td><span className={`status ${requestStatusTone(request.workflow_stage || request.status)}`}>{request.status === 'pending' && request.start_date <= dateKey() ? 'Approval overdue' : leaveStageLabel(request.workflow_stage, request.status)}</span></td>
           <td><strong className="request-type">{request.leave_type_record?.name || leaveTypeLabel(request.leave_type)}</strong></td>
           <td>{compactDateRange(request.start_date, request.end_date)}</td>
           <td>{request.duration_days} {request.duration_days === 1 ? 'day' : 'days'}</td>
@@ -2194,11 +2194,13 @@ function PaginatedLeaveRequestTable({ leaveRequests, expandedId, onExpandedId, o
           <div className="request-inline-detail">
             <div><span>Leave period</span><strong>{compactDateRange(request.start_date, request.end_date)}</strong></div>
             <div><span>Submitted to</span><strong>{request.supervisor?.full_name || 'Assigned supervisor'}</strong></div>
-            <div><span>Current stage</span><strong>{leaveStageLabel(request.workflow_stage, request.status)}</strong></div>
+            <div><span>Current stage</span><strong>{request.escalated_at ? 'Escalated to HR' : leaveStageLabel(request.workflow_stage, request.status)}</strong></div>
+            {request.supervisor_locked_at && <div className="wide"><span>Action required</span><strong>Supervisor window closed — HR or admin must resolve this request.</strong></div>}
             <div className="wide"><span>Reason / comment</span><strong>{request.reason || 'No reason provided.'}</strong></div>
             {request.reviewer_note && <div className="wide"><span>Reviewer note</span><strong>{request.reviewer_note}</strong></div>}
             <div className="wide"><span>Approval timeline</span><div className="approval-timeline">{request.events?.length ? request.events.map((event) => <p key={event.id}><strong>{event.event_type.replaceAll('_', ' ')}</strong> <span>{formatDateTime(event.created_at)}</span>{event.note && <small>{event.note}</small>}</p>) : <p><strong>Submitted</strong> <span>{formatDateTime(request.created_at)}</span></p>}</div></div>
-            {['supervisor_pending', 'hr_pending'].includes(request.workflow_stage || '') && <div className="wide request-cancel"><button type="button" className="reject-button" onClick={async (event) => { event.stopPropagation(); if (window.confirm('Cancel this leave request and release the reserved balance?')) await onCancel(request.id, 'Cancelled by requester'); }}>Cancel request</button></div>}
+            {['supervisor_pending', 'hr_pending'].includes(request.workflow_stage || '') && request.start_date > dateKey() && <div className="wide request-cancel"><button type="button" className="reject-button" onClick={async (event) => { event.stopPropagation(); if (window.confirm('Cancel this leave request and release the reserved balance?')) await onCancel(request.id, 'Cancelled by requester'); }}>Cancel request</button></div>}
+            {['supervisor_pending', 'hr_pending'].includes(request.workflow_stage || '') && request.start_date <= dateKey() && <div className="wide"><span>Withdrawal</span><strong>Contact HR to withdraw leave after its start date.</strong></div>}
           </div>
         </td></tr>}
       </Fragment>;
@@ -2336,7 +2338,7 @@ function ApprovalDetails({ item, onClose, onDecision }: { item: ApprovalItem; on
       <div className="detail-drawer-head"><div><p className="eyebrow">{isLeave ? 'LEAVE APPROVAL' : 'CORRECTION APPROVAL'}</p><h2>{item.requester.full_name}</h2><p>{item.requester.employee_id} / {item.requester.department || 'Unassigned department'}</p></div><button className="close-button" aria-label="Close approval details" onClick={onClose}>x</button></div>
       <div className="detail-status-line"><span className={`status ${requestStatusTone(item.status)}`}>{isLeave ? leaveStageLabel(item.leave?.workflow_stage, item.status) : item.status === 'pending' ? 'Pending review' : item.status === 'approved' ? 'Approved' : 'Rejected'}</span><span>Submitted {formatDateTime(item.created_at)}</span></div>
       {isLeave && item.leave ? <>
-        <section className="detail-section"><h3>Leave request</h3><div className="detail-grid"><DetailPair label="Leave type" value={item.leave.leave_type_record?.name || leaveTypeLabel(item.leave.leave_type)} /><DetailPair label="Duration" value={`${item.leave.duration_days} day${item.leave.duration_days === 1 ? '' : 's'}`} /><DetailPair label="Start date" value={displayDate(item.leave.start_date)} /><DetailPair label="End date" value={displayDate(item.leave.end_date)} /><DetailPair label="Submitted to" value={item.leave.supervisor?.full_name || 'Assigned supervisor'} /><DetailPair label="Current stage" value={leaveStageLabel(item.leave.workflow_stage, item.leave.status)} /></div></section>
+        <section className="detail-section"><h3>Leave request</h3><div className="detail-grid"><DetailPair label="Leave type" value={item.leave.leave_type_record?.name || leaveTypeLabel(item.leave.leave_type)} /><DetailPair label="Duration" value={`${item.leave.duration_days} day${item.leave.duration_days === 1 ? '' : 's'}`} /><DetailPair label="Start date" value={displayDate(item.leave.start_date)} /><DetailPair label="End date" value={displayDate(item.leave.end_date)} /><DetailPair label="Submitted to" value={item.leave.supervisor?.full_name || 'Assigned supervisor'} /><DetailPair label="Current stage" value={item.leave.escalated_at ? 'Escalated to HR' : leaveStageLabel(item.leave.workflow_stage, item.leave.status)} />{item.leave.supervisor_locked_at && <DetailPair label="Action required" value="HR or admin review" />}</div></section>
         <RequestNote label="Employee reason" value={item.leave.reason || 'No reason provided.'} />
       </> : item.correction ? <>
         <section className="detail-section"><h3>Attendance correction</h3><div className="detail-grid"><DetailPair label="Affected date" value={displayDate(item.correction.work_date)} /><DetailPair label="Correction type" value={requestTypeLabel(item).replace(' correction', '')} /><DetailPair label="Original clock in" value={formatTime(item.attendance?.clock_in)} /><DetailPair label="Original clock out" value={formatTime(item.attendance?.clock_out)} /><DetailPair label="Corrected clock in" value={formatTime(item.correction.corrected_clock_in)} /><DetailPair label="Corrected clock out" value={formatTime(item.correction.corrected_clock_out)} /></div></section>
