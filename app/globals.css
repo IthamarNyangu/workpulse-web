@@ -434,6 +434,29 @@ td { color:var(--text-secondary); font-size:13px; font-weight:450; }
 .organisation-employee-table .status { white-space:nowrap; }
 .organisation-empty { min-height:230px; padding:30px; display:grid; place-content:center; gap:8px; text-align:center; color:var(--ink-soft); }
 .organisation-empty strong { color:var(--ink); font-size:17px; }
+.clocking-policy-panel { padding:24px; background:#f8faf9; }
+.clocking-policy-intro { display:flex; align-items:flex-start; justify-content:space-between; gap:24px; padding:0 2px 20px; }
+.clocking-policy-intro h3 { margin:5px 0 6px; color:var(--ink); font-size:21px; letter-spacing:-.35px; }
+.clocking-policy-intro p:not(.eyebrow) { max-width:720px; margin:0; color:var(--ink-soft); font-size:13px; line-height:1.55; }
+.clocking-policy-intro > span { flex:0 0 auto; padding:7px 10px; border:1px solid #b9ddc6; border-radius:999px; background:#edf8f1; color:var(--green-deep); font-size:11px; font-weight:850; }
+.clocking-method-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; }
+.clocking-method-card { display:flex; align-items:center; justify-content:space-between; gap:20px; min-width:0; padding:17px 18px; border:1px solid #d9e1dc; border-radius:12px; background:#fff; }
+.clocking-method-card.enabled { border-color:#b6d8c2; box-shadow:inset 3px 0 0 var(--green); }
+.clocking-method-copy { min-width:0; }
+.clocking-method-heading { display:flex; align-items:center; flex-wrap:wrap; gap:8px; }
+.clocking-method-heading h4 { margin:0; color:var(--ink); font-size:14px; }
+.clocking-method-heading span { padding:3px 6px; border-radius:6px; background:#eef1f3; color:#687487; font-size:9px; font-weight:850; text-transform:uppercase; letter-spacing:.35px; }
+.clocking-method-heading span.available { background:#e5f5eb; color:#087343; }
+.clocking-method-copy p { margin:7px 0 0; color:var(--ink-soft); font-size:12px; line-height:1.45; }
+.clocking-method-copy small { display:block; margin-top:7px; color:#8a5a00; font-size:10px; font-weight:750; }
+.policy-switch { display:grid; grid-template-columns:38px auto; align-items:center; gap:5px 8px; flex:0 0 auto; cursor:pointer; }
+.policy-switch input { position:absolute; width:1px; height:1px; opacity:0; pointer-events:none; }
+.policy-switch > span { position:relative; width:38px; height:22px; border-radius:999px; background:#cbd3d8; transition:background .18s ease; }
+.policy-switch > span::after { content:''; position:absolute; top:3px; left:3px; width:16px; height:16px; border-radius:50%; background:#fff; box-shadow:0 1px 3px rgba(15,29,54,.25); transition:transform .18s ease; }
+.policy-switch input:checked + span { background:var(--green); }
+.policy-switch input:checked + span::after { transform:translateX(16px); }
+.policy-switch em { grid-column:1 / -1; color:var(--ink-soft); font-size:9px; font-style:normal; font-weight:800; text-align:center; text-transform:uppercase; letter-spacing:.35px; }
+.policy-switch.unavailable { cursor:not-allowed; opacity:.58; }
 
 @media (max-width:980px) {
   .organisation-hero { align-items:flex-start; flex-direction:column; }
@@ -441,6 +464,7 @@ td { color:var(--text-secondary); font-size:13px; font-weight:450; }
   .organisation-metrics { grid-template-columns:repeat(2,minmax(0,1fr)); }
   .organisation-head { align-items:stretch; flex-direction:column; }.organisation-directory-tools { align-items:stretch; flex-direction:column; }.organisation-access-filter select { width:100%; }
   .organisation-search { max-width:none; width:100%; }
+  .clocking-method-grid { grid-template-columns:1fr; }
 }
 
 @media (max-width:620px) {
@@ -448,6 +472,7 @@ td { color:var(--text-secondary); font-size:13px; font-weight:450; }
   .organisation-metrics { gap:10px; }.organisation-tabs { padding:13px 16px; }
   .organisation-tab { padding:8px 11px; }.organisation-empty { min-height:190px; }
   .organisation-table-wrap .organisation-employee-table { min-width:720px; }
+  .clocking-policy-panel { padding:18px 15px; }.clocking-policy-intro { flex-direction:column; gap:12px; }.clocking-method-card { padding:15px; }
 }
 
 /* My Requests: employee request centre for corrections and leave. */

@@ -15,14 +15,14 @@ import {
 } from '../components/icons';
 import { isSupabaseConfigured, supabase } from '../lib/supabase';
 import { submitWebClock, webAttendanceSelect } from '../lib/web-attendance';
-import type { ApprovalItem, AttendanceOffice, AttendanceRecord, CorrectionRequest, LeaveBalance, LeaveRequest, LeaveRequestEvent, LeaveType, Profile, TeamRow, WebClockInput, WebClockResult, WorkPulseRole } from '../lib/types';
+import type { ApprovalItem, AttendanceOffice, AttendanceRecord, ClockingMethod, CorrectionRequest, LeaveBalance, LeaveRequest, LeaveRequestEvent, LeaveType, OrganisationClockingMethod, Profile, TeamRow, WebClockInput, WebClockResult, WorkPulseRole } from '../lib/types';
 
 type Office = AttendanceOffice;
 type Department = { id: string; name: string; is_active: boolean };
 type JobTitle = { id: string; name: string; is_active: boolean };
 type HrDirectoryEmployee = { source_id: number; employee_no: string; full_name: string; work_email: string | null; department_name: string | null; job_title_name: string | null; is_active: boolean };
 type HrSyncRun = { id: string; started_at: string; completed_at: string | null; status: 'running' | 'completed' | 'failed'; received_count: number; linked_profile_count: number; error_message: string | null };
-type OrganisationTab = 'employees' | 'departments' | 'job_titles' | 'offices';
+type OrganisationTab = 'employees' | 'departments' | 'job_titles' | 'offices' | 'clocking';
 type PortalView = 'attendance' | 'requests' | 'approvals' | 'reports' | 'organisation';
 type StatusFilter = 'all' | 'attention' | 'on_duty' | 'completed' | 'leave' | 'location';
 type AttendanceScope = 'mine' | 'team';
@@ -38,6 +38,17 @@ const roleLabel: Record<WorkPulseRole, string> = {
   supervisor: 'Supervisor',
   hr: 'HR',
   admin: 'Administrator',
+};
+
+const clockingMethodDetails: Record<ClockingMethod, { label: string; description: string; phase: string }> = {
+  mobile_app: { label: 'WorkPulse mobile app', description: 'Organisation or personal smartphones using the Flutter app.', phase: 'Available now' },
+  web_portal: { label: 'Browser clocking', description: 'Employees register attendance from the WorkPulse web portal.', phase: 'Available now' },
+  personal_device_pwa: { label: 'Personal-device PWA', description: 'A data-light installable web app for employee-owned phones.', phase: 'Planned' },
+  kiosk_pin: { label: 'Shared kiosk with PIN', description: 'A registered shared workplace device using employee number and PIN.', phase: 'Next build' },
+  kiosk_qr: { label: 'Shared kiosk with QR', description: 'WorkPulse-issued employee QR cards used at a registered kiosk.', phase: 'Planned' },
+  kiosk_nfc: { label: 'Shared kiosk with NFC', description: 'Staff cards or NFC badges used on supported kiosk hardware.', phase: 'Later' },
+  field_team: { label: 'Field-team clocking', description: 'Temporary worksites and supervisor-assisted employee confirmation.', phase: 'Planned' },
+  sms_ussd: { label: 'SMS / USSD fallback', description: 'Feature-phone attendance for approved low-connectivity scenarios.', phase: 'Later' },
 };
 
 const statusLabel: Record<string, string> = {
@@ -438,6 +449,8 @@ export default function PortalPage() {
   const [organisationDepartments, setOrganisationDepartments] = useState<Department[]>([]);
   const [organisationJobTitles, setOrganisationJobTitles] = useState<JobTitle[]>([]);
   const [organisationOffices, setOrganisationOffices] = useState<Office[]>([]);
+  const [organisationClockingMethods, setOrganisationClockingMethods] = useState<OrganisationClockingMethod[]>([]);
+  const [clockingMethodSaving, setClockingMethodSaving] = useState<ClockingMethod | null>(null);
   const [organisationLoading, setOrganisationLoading] = useState(false);
   const [organisationError, setOrganisationError] = useState<string | null>(null);
   const [hrSyncing, setHrSyncing] = useState(false);
@@ -446,6 +459,7 @@ export default function PortalPage() {
   const [webClockOffices, setWebClockOffices] = useState<AttendanceOffice[]>([]);
   const [webClockLoading, setWebClockLoading] = useState(false);
   const [webClockError, setWebClockError] = useState<string | null>(null);
+  const [webClockEnabled, setWebClockEnabled] = useState(true);
 
   useEffect(() => {
     if (!supabase) return;
@@ -471,10 +485,12 @@ export default function PortalPage() {
         setOrganisationDepartments([]);
         setOrganisationJobTitles([]);
         setOrganisationOffices([]);
+        setOrganisationClockingMethods([]);
         setOrganisationError(null);
         setWebClockAttendance(null);
         setWebClockOffices([]);
         setWebClockError(null);
+        setWebClockEnabled(true);
       }
     });
     return () => subscription.subscription.unsubscribe();
@@ -662,7 +678,7 @@ export default function PortalPage() {
     setWebClockLoading(true);
     setWebClockError(null);
     try {
-      const [attendanceResponse, officesResponse] = await Promise.all([
+      const [attendanceResponse, officesResponse, clockingPolicyResponse] = await Promise.all([
         supabase
           .from('attendance_records')
           .select(webAttendanceSelect)
@@ -674,11 +690,15 @@ export default function PortalPage() {
           .select('id, office_name, province, district, latitude, longitude, radius_m, is_active')
           .eq('is_active', true)
           .order('office_name'),
+        supabase.rpc('current_organisation_clocking_policy'),
       ]);
       if (attendanceResponse.error) throw attendanceResponse.error;
       if (officesResponse.error) throw officesResponse.error;
+      if (clockingPolicyResponse.error) throw clockingPolicyResponse.error;
       setWebClockAttendance((attendanceResponse.data || null) as AttendanceRecord | null);
       setWebClockOffices((officesResponse.data || []) as AttendanceOffice[]);
+      const policy = ((clockingPolicyResponse.data || []) as OrganisationClockingMethod[]).find((method) => method.method === 'web_portal');
+      setWebClockEnabled(policy?.is_enabled ?? false);
     } catch (caught) {
       setWebClockError(caught instanceof Error ? caught.message : 'Web clocking data could not be loaded.');
     } finally {
@@ -988,7 +1008,7 @@ export default function PortalPage() {
         }
         return records;
       })();
-      const [profilesResponse, directoryResponse, departmentsResponse, jobTitlesResponse, officesResponse, syncRunResponse] = await Promise.all([
+      const [profilesResponse, directoryResponse, departmentsResponse, jobTitlesResponse, officesResponse, syncRunResponse, clockingPolicyResponse] = await Promise.all([
         supabase
           .from('profiles')
           .select('id, employee_id, full_name, email, role, department, job_title, is_active, hr_employee_source_id')
@@ -1001,12 +1021,14 @@ export default function PortalPage() {
           .select('id, office_name, province, district, radius_m, is_active')
           .order('office_name'),
         supabase.from('hr_directory_sync_runs').select('id,started_at,completed_at,status,received_count,linked_profile_count,error_message').order('started_at', { ascending: false }).limit(1).maybeSingle(),
+        supabase.rpc('current_organisation_clocking_policy'),
       ]);
       if (profilesResponse.error) throw profilesResponse.error;
       if (departmentsResponse.error) throw departmentsResponse.error;
       if (jobTitlesResponse.error) throw jobTitlesResponse.error;
       if (officesResponse.error) throw officesResponse.error;
       if (syncRunResponse.error) throw syncRunResponse.error;
+      if (clockingPolicyResponse.error) throw clockingPolicyResponse.error;
 
       setOrganisationProfiles((profilesResponse.data || []) as Profile[]);
       setHrDirectoryEmployees(directoryResponse);
@@ -1014,10 +1036,30 @@ export default function PortalPage() {
       setOrganisationJobTitles((jobTitlesResponse.data || []) as JobTitle[]);
       setOrganisationOffices((officesResponse.data || []) as Office[]);
       setLatestHrSync((syncRunResponse.data || null) as HrSyncRun | null);
+      setOrganisationClockingMethods((clockingPolicyResponse.data || []) as OrganisationClockingMethod[]);
     } catch (caught) {
       setOrganisationError(caught instanceof Error ? caught.message : 'WorkPulse could not load organisation data.');
     } finally {
       setOrganisationLoading(false);
+    }
+  }
+
+  async function updateOrganisationClockingMethod(method: OrganisationClockingMethod, isEnabled: boolean) {
+    if (!supabase || clockingMethodSaving) return;
+    setClockingMethodSaving(method.method);
+    setOrganisationError(null);
+    try {
+      const { error: updateError } = await supabase.rpc('set_organisation_clocking_method', {
+        p_method: method.method,
+        p_is_enabled: isEnabled,
+        p_requires_location: method.requires_location,
+      });
+      if (updateError) throw updateError;
+      await Promise.all([loadOrganisationData(), loadWebClockData()]);
+    } catch (caught) {
+      setOrganisationError(caught instanceof Error ? caught.message : 'The clocking method could not be updated.');
+    } finally {
+      setClockingMethodSaving(null);
     }
   }
 
@@ -1328,6 +1370,7 @@ export default function PortalPage() {
             webClockError={webClockError}
             onWebClock={handleWebClock}
             webClockEmployeeName={profile?.full_name || 'Signed-in employee'}
+            webClockEnabled={webClockEnabled}
           />
         ) : activeView === 'requests' ? (
           <MyRequestsWorkspace
@@ -1391,12 +1434,15 @@ export default function PortalPage() {
           departments={organisationDepartments}
           jobTitles={organisationJobTitles}
           offices={organisationOffices}
+          clockingMethods={organisationClockingMethods}
+          clockingMethodSaving={clockingMethodSaving}
           loading={organisationLoading}
           error={organisationError}
           hrSyncing={hrSyncing}
           hrSyncResult={hrSyncResult}
           latestHrSync={latestHrSync}
           onHrSync={syncHrDirectory}
+          onClockingMethodChange={updateOrganisationClockingMethod}
         />}
       </section>
       {selectedRow && <AttendanceDetails row={selectedRow} onClose={() => setSelectedRow(null)} />}
@@ -1434,6 +1480,7 @@ type AttendanceWorkspaceProps = {
   webClockError: string | null;
   onWebClock: (input: WebClockInput) => Promise<WebClockResult>;
   webClockEmployeeName: string;
+  webClockEnabled: boolean;
 };
 
 function AttendanceWorkspace({
@@ -1461,6 +1508,7 @@ function AttendanceWorkspace({
   webClockError,
   onWebClock,
   webClockEmployeeName,
+  webClockEnabled,
 }: AttendanceWorkspaceProps) {
   const date = new Date(`${selectedDate}T12:00:00`);
   const moveDate = (days: number) => onDateChange(dateKey(new Date(date.getTime() + days * 86_400_000)));
@@ -1498,7 +1546,7 @@ function AttendanceWorkspace({
       </div>
     </section>
 
-    <WebClockPreview attendance={webClockAttendance} offices={webClockOffices} loading={webClockLoading} error={webClockError} onClock={onWebClock} employeeName={webClockEmployeeName} />
+    {webClockEnabled && <WebClockPreview attendance={webClockAttendance} offices={webClockOffices} loading={webClockLoading} error={webClockError} onClock={onWebClock} employeeName={webClockEmployeeName} />}
 
     <section className="metric-grid">
       <Metric label="Employees" value={metrics.employees} tone="ink" />
@@ -2413,24 +2461,30 @@ function OrganisationWorkspace({
   departments,
   jobTitles,
   offices,
+  clockingMethods,
+  clockingMethodSaving,
   loading,
   error,
   hrSyncing,
   hrSyncResult,
   latestHrSync,
   onHrSync,
+  onClockingMethodChange,
 }: {
   profiles: Profile[];
   directoryEmployees: HrDirectoryEmployee[];
   departments: Department[];
   jobTitles: JobTitle[];
   offices: Office[];
+  clockingMethods: OrganisationClockingMethod[];
+  clockingMethodSaving: ClockingMethod | null;
   loading: boolean;
   error: string | null;
   hrSyncing: boolean;
   hrSyncResult: string | null;
   latestHrSync: HrSyncRun | null;
   onHrSync: () => void;
+  onClockingMethodChange: (method: OrganisationClockingMethod, isEnabled: boolean) => void;
 }) {
   const [tab, setTab] = useState<OrganisationTab>('employees');
   const [query, setQuery] = useState('');
@@ -2457,7 +2511,9 @@ function OrganisationWorkspace({
   const filteredDepartments = useMemo(() => filterOrganisationItems(activeDepartments, query, (item) => [item.name]), [activeDepartments, query]);
   const filteredJobTitles = useMemo(() => filterOrganisationItems(activeJobTitles, query, (item) => [item.name]), [activeJobTitles, query]);
   const filteredOffices = useMemo(() => filterOrganisationItems(offices, query, (item) => [item.office_name, item.province, item.district]), [offices, query]);
-  const selectedItems = tab === 'employees'
+  const selectedItems = tab === 'clocking'
+    ? []
+    : tab === 'employees'
     ? filteredEmployees
     : tab === 'departments'
       ? filteredDepartments
@@ -2495,18 +2551,19 @@ function OrganisationWorkspace({
     <section className="register-panel organisation-panel">
       <div className="register-head organisation-head">
         <div><p className="eyebrow">DIRECTORY</p><h2>{organisationTabLabel(tab)}</h2></div>
-        <div className="organisation-directory-tools">
+        {tab !== 'clocking' && <div className="organisation-directory-tools">
           {tab === 'employees' && <label className="organisation-access-filter"><span>Account status</span><select value={employeeAccessFilter} onChange={(event) => setEmployeeAccessFilter(event.target.value as typeof employeeAccessFilter)}><option value="all">All employees</option><option value="linked">WorkPulse account</option><option value="not_set_up">Not set up</option><option value="missing_email">Missing work email</option></select></label>}
           <label className="search-box organisation-search"><SearchIcon /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={organisationSearchPlaceholder(tab)} aria-label={`Search ${organisationTabLabel(tab).toLowerCase()}`} />{query && <button type="button" className="clear-search" onClick={() => setQuery('')} aria-label="Clear search">x</button>}</label>
-        </div>
+        </div>}
       </div>
       <div className="organisation-tabs" role="tablist" aria-label="Organisation data">
         <OrganisationTabButton active={tab === 'employees'} label="Employees" count={directoryEmployees.length} onClick={() => setTab('employees')} />
         <OrganisationTabButton active={tab === 'departments'} label="Departments" count={activeDepartments.length} onClick={() => setTab('departments')} />
         <OrganisationTabButton active={tab === 'job_titles'} label="Job titles" count={activeJobTitles.length} onClick={() => setTab('job_titles')} />
         <OrganisationTabButton active={tab === 'offices'} label="Office locations" count={offices.length} onClick={() => setTab('offices')} />
+        <OrganisationTabButton active={tab === 'clocking'} label="Clocking methods" count={clockingMethods.filter((method) => method.is_enabled).length} onClick={() => setTab('clocking')} />
       </div>
-      {loading ? <OrganisationLoadingState /> : error ? <OrganisationErrorState message={error} /> : <>
+      {loading ? <OrganisationLoadingState /> : error ? <OrganisationErrorState message={error} /> : tab === 'clocking' ? <ClockingMethodsPanel methods={clockingMethods} saving={clockingMethodSaving} onChange={onClockingMethodChange} /> : <>
         <div className="table-wrap organisation-table-wrap">
           {tab === 'employees' ? <table className="organisation-employee-table"><thead><tr><th>Employee</th><th>Department</th><th>Job title</th><th>WorkPulse account</th></tr></thead><tbody>{(visibleItems as HrDirectoryEmployee[]).map((person) => { const account = accountForEmployee(person); return <tr key={person.source_id}><td><div className="employee-cell"><span className="table-avatar">{person.full_name.slice(0, 1)}</span><span><strong>{person.full_name}</strong><small>{person.employee_no}{person.work_email ? ` / ${person.work_email}` : ' / Missing work email'}</small></span></div></td><td>{person.department_name || 'Unassigned'}</td><td>{person.job_title_name || 'Not assigned'}</td><td>{account ? <span className="status green">{roleLabel[account.role]}</span> : <span className={`status ${person.work_email ? 'slate' : 'amber'}`}>{person.work_email ? 'Not set up' : 'Email required'}</span>}</td></tr>; })}</tbody></table> : null}
           {tab === 'departments' ? <table><thead><tr><th>Department</th><th>Employees</th><th>Status</th></tr></thead><tbody>{(visibleItems as Department[]).map((department) => <tr key={department.id}><td><strong>{department.name}</strong></td><td>{employeeCountForDepartment(department.name)}</td><td><span className={`status ${department.is_active ? 'green' : 'slate'}`}>{department.is_active ? 'Active' : 'Inactive'}</span></td></tr>)}</tbody></table> : null}
@@ -2526,11 +2583,37 @@ function filterOrganisationItems<T>(items: T[], query: string, values: (item: T)
 }
 
 function organisationTabLabel(tab: OrganisationTab) {
-  return ({ employees: 'Employees', departments: 'Departments', job_titles: 'Job titles', offices: 'Office locations' })[tab];
+  return ({ employees: 'Employees', departments: 'Departments', job_titles: 'Job titles', offices: 'Office locations', clocking: 'Clocking methods' })[tab];
 }
 
 function organisationSearchPlaceholder(tab: OrganisationTab) {
-  return ({ employees: 'Search name, ID, email, department or job title', departments: 'Search departments', job_titles: 'Search job titles', offices: 'Search office, province or district' })[tab];
+  return ({ employees: 'Search name, ID, email, department or job title', departments: 'Search departments', job_titles: 'Search job titles', offices: 'Search office, province or district', clocking: 'Search clocking methods' })[tab];
+}
+
+function ClockingMethodsPanel({ methods, saving, onChange }: { methods: OrganisationClockingMethod[]; saving: ClockingMethod | null; onChange: (method: OrganisationClockingMethod, isEnabled: boolean) => void }) {
+  const order: ClockingMethod[] = ['mobile_app', 'web_portal', 'personal_device_pwa', 'kiosk_pin', 'kiosk_qr', 'kiosk_nfc', 'field_team', 'sms_ussd'];
+  const sorted = [...methods].sort((left, right) => order.indexOf(left.method) - order.indexOf(right.method));
+  const organisationName = methods[0]?.organisation_name || 'Your organisation';
+  return <div className="clocking-policy-panel">
+    <div className="clocking-policy-intro">
+      <div><p className="eyebrow">ATTENDANCE CHANNELS</p><h3>Allowed clocking methods</h3><p>{organisationName} controls which attendance channels employees may use. New delivery modes remain unavailable until their implementation has been tested.</p></div>
+      <span>{methods.filter((method) => method.is_enabled).length} enabled</span>
+    </div>
+    <div className="clocking-method-grid">
+      {sorted.map((method) => {
+        const detail = clockingMethodDetails[method.method];
+        const available = detail.phase === 'Available now';
+        return <article className={`clocking-method-card ${method.is_enabled ? 'enabled' : ''}`} key={method.method}>
+          <div className="clocking-method-copy"><div className="clocking-method-heading"><h4>{detail.label}</h4><span className={available ? 'available' : ''}>{detail.phase}</span></div><p>{detail.description}</p>{method.requires_location && <small>Location evidence required</small>}</div>
+          <label className={`policy-switch ${available ? '' : 'unavailable'}`} title={available ? `${method.is_enabled ? 'Disable' : 'Enable'} ${detail.label}` : `${detail.label} is not available yet`}>
+            <input type="checkbox" checked={method.is_enabled} disabled={!available || saving !== null} onChange={(event) => onChange(method, event.target.checked)} />
+            <span aria-hidden="true" />
+            <em>{saving === method.method ? 'Saving' : method.is_enabled ? 'Enabled' : 'Disabled'}</em>
+          </label>
+        </article>;
+      })}
+    </div>
+  </div>;
 }
 
 function OrganisationTabButton({ active, label, count, onClick }: { active: boolean; label: string; count: number; onClick: () => void }) {

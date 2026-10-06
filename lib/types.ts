@@ -1,5 +1,26 @@
 export type WorkPulseRole = 'employee' | 'supervisor' | 'hr' | 'admin';
 
+export type ClockingMethod =
+  | 'mobile_app'
+  | 'personal_device_pwa'
+  | 'web_portal'
+  | 'kiosk_pin'
+  | 'kiosk_qr'
+  | 'kiosk_nfc'
+  | 'field_team'
+  | 'sms_ussd';
+
+export type OrganisationClockingMethod = {
+  organisation_id: string;
+  organisation_code: string;
+  organisation_name: string;
+  method: ClockingMethod;
+  is_enabled: boolean;
+  requires_location: boolean;
+  settings: Record<string, unknown>;
+  updated_at: string;
+};
+
 export type Profile = {
   id: string;
   employee_id: string;
@@ -9,6 +30,7 @@ export type Profile = {
   department: string | null;
   job_title: string | null;
   is_active: boolean;
+  organisation_id?: string | null;
 };
 
 export type AttendanceStatus =
